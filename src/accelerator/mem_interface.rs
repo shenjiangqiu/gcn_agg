@@ -2,14 +2,17 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use ramulator_wrapper::RamulatorWrapper;
 
+use super::req::Req;
+
+#[derive(Debug)]
 pub struct MemRequst {
     addr_vec: Vec<u64>,
-    id: usize,
+    id: Req,
     is_write: bool,
 }
 
 impl MemRequst {
-    fn new(addr_vec: Vec<u64>, id: usize, is_write: bool) -> Self {
+    fn new(addr_vec: Vec<u64>, id: Req, is_write: bool) -> Self {
         MemRequst {
             addr_vec,
             id,
@@ -25,14 +28,15 @@ impl MemRequst {
 /// * `recv_queue`: the queue of requests to be received from memory
 /// * `current_waiting_request`: the current request id on flight,key is the request id, value is the request address
 /// * `current_waiting_mem_request`: the current request id on flight,key is the request addr, value is the request id that contains this addr
+#[derive(Debug)]
 pub struct MemInterface {
     mem: RamulatorWrapper,
     send_queue: VecDeque<MemRequst>,
     send_size: usize,
-    recv_queue: VecDeque<usize>,
+    recv_queue: VecDeque<Req>,
     recv_size: usize,
-    current_waiting_request: HashMap<usize, HashSet<u64>>,
-    current_waiting_mem_request: HashMap<u64, HashSet<usize>>,
+    current_waiting_request: HashMap<Req, HashSet<u64>>,
+    current_waiting_mem_request: HashMap<u64, HashSet<Req>>,
 }
 
 impl MemInterface {
@@ -107,21 +111,21 @@ impl MemInterface {
     }
     /// # Description
     /// * send a request to memory
-    pub fn send(&mut self, id_: usize, addr_vec: Vec<u64>, is_write: bool) {
+    pub fn send(&mut self, id_: Req, addr_vec: Vec<u64>, is_write: bool) {
         self.send_queue
             .push_back(MemRequst::new(addr_vec, id_, is_write));
     }
     /// # Description
     /// * receive a response from memory and keep the request ***still in mem(not pop it)***
     #[allow(dead_code)]
-    pub fn receive(&self) -> usize {
+    pub fn receive(&self) -> Req {
         let req = *self.recv_queue.front().unwrap();
         req
     }
     /// # Description
     /// * receive a response from memory and pop that request
     #[allow(dead_code)]
-    pub fn receive_pop(&mut self) -> usize {
+    pub fn receive_pop(&mut self) -> Req {
         let req = self.recv_queue.pop_front().unwrap();
         req
     }
@@ -130,12 +134,14 @@ impl MemInterface {
 #[cfg(test)]
 mod tests {
 
+    use crate::accelerator::req::Req;
+
     #[test]
     fn test_mem_interface() {
         let mut mem_interface = super::MemInterface::new(1, 1);
         assert_eq!(mem_interface.available(), true);
         assert_eq!(mem_interface.ret_ready(), false);
-        mem_interface.send(0, vec![0], false);
+        mem_interface.send(Req::new(1, 1, 1), vec![0], false);
         assert_eq!(mem_interface.available(), false);
         assert_eq!(mem_interface.ret_ready(), false);
 
@@ -147,7 +153,7 @@ mod tests {
         assert_eq!(mem_interface.ret_ready(), true);
 
         let result = mem_interface.receive();
-        assert_eq!(result, 0);
+        assert_eq!(result, Req::new(1, 1, 1));
         assert_eq!(mem_interface.current_waiting_mem_request.is_empty(), true);
         assert_eq!(mem_interface.current_waiting_request.is_empty(), true);
     }

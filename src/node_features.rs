@@ -1,17 +1,19 @@
 use std::fs::File;
 use std::io::Read;
 
+#[derive(Debug)]
 pub struct NodeFeatures {
-    features: Vec<Vec<usize>>,
+    pub features: Vec<Vec<usize>>,
+    pub start_addrs: Vec<u64>,
 }
 
 impl From<&str> for NodeFeatures {
-    /// 
+    ///
     /// # Arguments
     /// * file_name - The name of the file to read
     /// # return
     /// * NodeFeatures - The features of the nodes
-    /// 
+    ///
     /// # Description
     /// Reads a file containing a list of features for each node.
     /// note each line of file contains a dense format of a node feature
@@ -75,8 +77,17 @@ impl From<&str> for NodeFeatures {
             }
             features.push(csc_line);
         }
+        // build start addr from the node features
 
-        NodeFeatures { features }
+        let mut start_addrs = Vec::new();
+        start_addrs.push(0u64);
+        for i in 1..=features.len() {
+            start_addrs.push(start_addrs[i - 1] + features[i - 1].len() as u64 * 4);
+        }
+        NodeFeatures {
+            features,
+            start_addrs,
+        }
     }
 }
 impl NodeFeatures {

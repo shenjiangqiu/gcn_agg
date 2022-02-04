@@ -6,6 +6,7 @@ pub enum BufferStatus {
     WaitingToWriteBack(usize),
     WritingBack(usize),
 }
+#[derive(Debug)]
 pub struct OutputBuffer {
     pub current_state: BufferStatus,
     pub next_state: BufferStatus,

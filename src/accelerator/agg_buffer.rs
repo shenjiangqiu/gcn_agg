@@ -6,6 +6,8 @@ pub enum BufferStatus {
     WaitingToMlp(usize),
     Mlp(usize),
 }
+
+#[derive(Debug)]
 pub struct AggBuffer {
     pub current_state: BufferStatus,
     pub next_state: BufferStatus,

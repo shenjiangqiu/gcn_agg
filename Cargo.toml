@@ -7,3 +7,5 @@ edition = "2021"
 
 [dependencies]
 ramulator-wrapper={path="../ramulator-wrapper"}
+itertools="*"
+lazy_static="*"

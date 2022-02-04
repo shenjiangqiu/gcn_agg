@@ -1,17 +1,19 @@
+use super::{req::Req, sliding_window::Window};
 use std::mem::swap;
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BufferStatus {
+#[derive(Debug, Clone)]
+pub enum BufferStatus<'a> {
     Empty,
-    WaitingToLoad(usize),
-    Loading(usize),
-    Reading(usize),
-    Ready(usize),
+    WaitingToLoad(Req, Window<'a>),
+    Loading(Req, Window<'a>),
+    Reading(Req, Window<'a>),
+    Ready(Req, Window<'a>),
 }
-pub struct InputBuffer {
-    pub current_state: BufferStatus,
-    pub next_state: BufferStatus,
+#[derive(Debug)]
+pub struct InputBuffer<'a> {
+    pub current_state: BufferStatus<'a>,
+    pub next_state: BufferStatus<'a>,
 }
-impl InputBuffer {
+impl<'a> InputBuffer<'a> {
     pub fn new() -> Self {
         InputBuffer {
             current_state: BufferStatus::Empty,
@@ -30,14 +32,22 @@ impl InputBuffer {
     /// assert_eq!(input_buffer.current_state, BufferStatus::Empty);
     /// assert_eq!(input_buffer.next_state, BufferStatus::WaitingToLoad(1));
     /// input_buffer.cycle();
-    /// assert_eq!(input_buffer.current_state, BufferStatus::WaitingToLoad(1));
+    /// assert_eq!(input_buffer.current_state, BufferStatus::Empty);
+    /// assert_eq!(input_buffer.next_state, BufferStatus::WaitingToLoad(1));
+    /// input_buffer.next_state = BufferStatus::Ready(1);
+    /// input_buffer.cycle();
+    /// assert_eq!(input_buffer.current_state, BufferStatus::Ready(1));
     /// assert_eq!(input_buffer.next_state, BufferStatus::Empty);
+    ///
     ///
     /// ```
     ///
     pub fn cycle(&mut self) {
-        match self.current_state {
-            BufferStatus::Empty => {
+        match (&self.current_state, &self.next_state) {
+            // both are empty, do nothing
+            (BufferStatus::Empty, BufferStatus::Empty) => {}
+            // current is empty, next is not empty, swap
+            (BufferStatus::Empty, _) => {
                 swap(&mut self.current_state, &mut self.next_state);
             }
             _ => {}
@@ -60,21 +70,20 @@ impl InputBuffer {
     /// assert_eq!(input_buffer.next_state, BufferStatus::Ready(1));
     ///
     /// ```
-    pub fn receive(&mut self, id_: usize) {
+    pub fn receive(&mut self, id_: &Req) {
         // test if id match any
-
-        match self.current_state {
-            BufferStatus::Reading(id) => {
-                if id == id_ {
-                    self.current_state = BufferStatus::Ready(id);
-                } else {
-                    assert_eq!(self.next_state, BufferStatus::Loading(id_));
-                    self.next_state = BufferStatus::Ready(id);
-                }
+        match (self.current_state, self.next_state) {
+            (BufferStatus::Loading(id, window), _) if &id == id_ => {
+                self.current_state = BufferStatus::Ready(id, window);
+            }
+            (_, BufferStatus::Loading(id, window)) if &id == id_ => {
+                self.next_state = BufferStatus::Ready(id, window);
             }
             _ => {
-                assert_eq!(self.next_state, BufferStatus::Loading(id_));
-                self.next_state = BufferStatus::Ready(id_);
+                panic!(
+                    "receive id: {:?} but current state is {:?} and next state is {:?}",
+                    id_, self.current_state, self.next_state
+                );
             }
         }
     }
@@ -91,15 +100,13 @@ impl InputBuffer {
     /// assert_eq!(input_buffer.send_req(), Some(1));
     /// assert_eq!(input_buffer.send_req(), None);
     /// ```
-    pub fn send_req(&mut self) -> Option<usize> {
-        if let BufferStatus::WaitingToLoad(id) = self.current_state {
-            self.current_state = BufferStatus::Loading(id);
-            Some(id)
-        } else if let BufferStatus::WaitingToLoad(id) = self.next_state {
-            self.next_state = BufferStatus::Loading(id);
-            Some(id)
-        } else {
-            None
+    pub fn send_req(&mut self,id: &Req) {
+        match (self.current_state,self.nex) {
+            
         }
+    }
+
+    pub fn add_task(&mut self, id_: Req, window: Window<'a>) {
+        self.next_state = BufferStatus::WaitingToLoad(id_, window);
     }
 }

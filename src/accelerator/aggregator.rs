@@ -7,6 +7,7 @@ enum AggregatorState {
     // the task id and remaining cycles
     Working(usize, u64),
 }
+#[derive(Debug)]
 pub struct Aggregator {
     sparse_cores: usize,
     sparse_width: usize,
