@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq,Hash)]
+#[derive(Debug, Clone, PartialEq, Eq,Hash)]
 pub struct Req {
     pub col_id: usize,
     pub row_id: usize,

@@ -5,17 +5,16 @@
 /// * `NoInputIter` means no next input iter,need to get next input layer and get next output iter
 /// * `NoWindow` means no next window for this input iter, need to get next input iter from the output iter
 /// * `Finished` means all layer is finished
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum SystemState {
+    Empty,
     Working,
-    NoInputIter,
-    NoWindow,
     Finished,
 }
 
 use super::{
     agg_buffer::AggBuffer,
-    aggregator::Aggregator,
+    aggregator::{self, Aggregator},
     input_buffer::{self, InputBuffer},
     mem_interface::MemInterface,
     output_buffer::OutputBuffer,
@@ -34,14 +33,14 @@ pub struct System<'a> {
     agg_buffer: AggBuffer,
     mem_interface: MemInterface,
     graph: &'a Graph,
-    node_features: &'a NodeFeatures,
+    node_features: Vec<&'a NodeFeatures>,
 
     input_buffer_size: usize,
     agg_buffer_size: usize,
     output_buffer_size: usize,
     current_layer: usize,
-    current_output_iter: Option<OutputWindowIterator<'a>>,
-    current_input_iter: Option<InputWindowIterator<'a>>,
+    current_output_iter: OutputWindowIterator<'a>,
+    current_input_iter: InputWindowIterator<'a>,
     current_window: Option<Window<'a>>,
     gcn_layer_num: usize,
     gcn_hidden_size: Vec<usize>,
@@ -50,7 +49,7 @@ pub struct System<'a> {
 impl<'a> System<'a> {
     pub fn new(
         graph: &'a Graph,
-        node_features: &'a NodeFeatures,
+        node_features: Vec<&'a NodeFeatures>,
         sparse_cores: usize,
         spase_width: usize,
         dense_cores: usize,
@@ -67,21 +66,23 @@ impl<'a> System<'a> {
         let output_buffer = OutputBuffer::new();
         let agg_buffer = AggBuffer::new();
         let mem_interface = MemInterface::new(64, 64);
-        let mut current_output_iter =
-            OutputWindowIterator::new(graph, node_features, agg_buffer_size, input_buffer_size, 0);
-        let mut current_input_iter = current_output_iter.next();
-        let current_window = match current_input_iter.as_mut() {
-            Some(iter) => iter.next(),
-            None => None,
-        };
+        let mut current_output_iter = OutputWindowIterator::new(
+            graph,
+            node_features.get(0).expect("node_features is empty"),
+            agg_buffer_size,
+            input_buffer_size,
+            0,
+        );
+        let mut current_input_iter = current_output_iter
+            .next()
+            .expect("cannot build the first input iter");
+        let current_window = Some(
+            current_input_iter
+                .next()
+                .expect("cannot build the first window"),
+        );
 
-        let state = match current_window {
-            Some(_) => SystemState::Working,
-            None => match current_input_iter {
-                Some(_) => SystemState::NoWindow,
-                None => SystemState::NoInputIter,
-            },
-        };
+        let state = SystemState::Working;
         System {
             state,
             finished: false,
@@ -97,11 +98,50 @@ impl<'a> System<'a> {
             agg_buffer_size,
             output_buffer_size,
             current_layer: 0,
-            current_output_iter: Some(current_output_iter),
+            current_output_iter,
             current_input_iter,
             current_window,
             gcn_layer_num,
             gcn_hidden_size,
+        }
+    }
+
+    pub fn move_to_next_window(&mut self) {
+        // go through the current_input_iter and current_output_iter to get the next window
+        // if the current_input_iter is finished, then get the next input iter
+        // if the current_output_iter is finished, then get the next output iter
+        // if both are finished, then the system is finished
+
+        let mut next_window = None;
+        while next_window.is_none() {
+            if let Some(window) = self.current_input_iter.next() {
+                next_window = Some(window);
+            } else if let Some(input_iter) = self.current_output_iter.next() {
+                self.current_input_iter = input_iter;
+                next_window = self.current_input_iter.next();
+            } else {
+                // need to move to the next layer and reset the output iter
+                self.current_layer += 1;
+                if self.current_layer >= self.gcn_layer_num {
+                    self.finished = true;
+                    self.state = SystemState::Finished;
+                    return;
+                }
+                self.current_output_iter = OutputWindowIterator::new(
+                    self.graph,
+                    self.node_features.get(self.current_layer).expect(
+                        format!("node_features is empty, layer: {}", self.current_layer).as_str(),
+                    ),
+                    self.agg_buffer_size,
+                    self.input_buffer_size,
+                    self.current_layer,
+                );
+                self.current_input_iter = self
+                    .current_output_iter
+                    .next()
+                    .expect("cannot build the first input iter");
+                next_window = self.current_input_iter.next();
+            }
         }
     }
 
@@ -118,21 +158,33 @@ impl<'a> System<'a> {
                 self.agg_buffer.cycle();
                 self.input_buffer.cycle();
                 self.output_buffer.cycle();
-
-                match &self.input_buffer.next_state {
+                // add task to current input_buffer or send request to memory
+                match self.input_buffer.get_current_state() {
                     input_buffer::BufferStatus::Empty => {
                         // add a task to the input buffer
                         // self.input_buffer.send_req(self.current_input_iter.as_ref().unwrap());
-                        let window = self.current_window.as_ref().unwrap();
+                        let window = self.current_window.take().unwrap();
                         let req_id = window.get_task_id();
-                        self.input_buffer.add_task(req_id.clone(), window.clone());
+
+                        self.input_buffer.add_task_to_current(window);
+                        self.move_to_next_window();
+                        return;
                     }
-                    input_buffer::BufferStatus::WaitingToLoad(req, window) => {
+                    input_buffer::BufferStatus::WaitingToLoad => {
                         if self.mem_interface.available() {
                             // generate addr from the req and window
 
                             let mut addr_vec = vec![];
-                            let start_addrs = &self.node_features.start_addrs;
+                            let window = self
+                                .input_buffer
+                                .get_current_window()
+                                .expect("no window in input buffer");
+                            let window_layer = window.get_task_id().layer_id;
+                            let start_addrs = self
+                                .node_features
+                                .get(window_layer)
+                                .expect("no such layer in nodefeatures")
+                                .start_addrs;
                             let mut start_addr = start_addrs[window.start_x];
                             let end_addr = start_addrs[window.end_x];
                             // round start_addr to the nearest 64
@@ -141,17 +193,98 @@ impl<'a> System<'a> {
                                 addr_vec.push(start_addr);
                                 start_addr += 64;
                             }
-                            self.mem_interface.send(req.clone(), addr_vec, false);
-                            self.input_buffer.send_req();
+                            self.mem_interface
+                                .send(window.get_task_id().clone(), addr_vec, false);
+                            self.input_buffer.send_req(true);
+                            return;
                         }
                     }
                     _ => {
                         // println!("input buffer is unknown");
                     }
                 }
-                match &self.input_buffer.current_state {
-                    input_buffer::BufferStatus::WaitingToLoad(_, _) => {
-                        input_buffer::BufferStatus::Ready()
+                // add task to next input_buffer or send request to memory
+                match self.input_buffer.get_next_state() {
+                    input_buffer::BufferStatus::Empty => {
+                        // add a task to the input buffer
+                        // self.input_buffer.send_req(self.current_input_iter.as_ref().unwrap());
+                        let window = self.current_window.take().unwrap();
+                        let req_id = window.get_task_id();
+                        self.input_buffer.add_task_to_current(window);
+                        self.move_to_next_window();
+                        return;
+                    }
+                    input_buffer::BufferStatus::WaitingToLoad => {
+                        if self.mem_interface.available() {
+                            // generate addr from the req and window
+
+                            let mut addr_vec = vec![];
+                            let window = self
+                                .input_buffer
+                                .get_current_window()
+                                .expect("no window in input buffer");
+                            let window_layer = window.get_task_id().layer_id;
+                            let start_addrs = self
+                                .node_features
+                                .get(window_layer)
+                                .expect("no such layer in nodefeatures")
+                                .start_addrs;
+                            let mut start_addr = start_addrs[window.start_x];
+                            let end_addr = start_addrs[window.end_x];
+                            // round start_addr to the nearest 64
+                            start_addr = start_addr / 64 * 64;
+                            while start_addr < end_addr {
+                                addr_vec.push(start_addr);
+                                start_addr += 64;
+                            }
+                            self.mem_interface
+                                .send(window.get_task_id().clone(), addr_vec, false);
+                            self.input_buffer.send_req(false);
+                            return;
+                        }
+                    }
+                    _ => {
+                        // println!("input buffer is unknown");
+                    }
+                }
+
+                // test if there are memory request return
+                if self.mem_interface.ret_ready() {
+                    let ret_req = self.mem_interface.receive_pop();
+                    self.input_buffer.receive(&ret_req);
+                    return;
+                }
+
+                // test if the aggregator is ready to start
+                match (
+                    self.input_buffer.get_current_state(),
+                    self.aggregator.get_state(),
+                ) {
+                    (input_buffer::BufferStatus::Ready, aggregator::AggregatorState::Idle) => {
+                        let current_window=self.input_buffer.get_current_window().unwrap();
+                        let window_layer = current_window.get_task_id().layer_id;
+                        self.aggregator.add_task(
+                            current_window,
+                            self.node_features.get(window_layer).unwrap(),
+                        );
+                        self.agg_buffer.add_task(current_window);
+                        
+                        self.input_buffer.current_state = input_buffer::BufferStatus::Reading;
+                        return;
+                    }
+                    _ => {}
+                }
+
+                // test if the aggregator is finished
+                match self.aggregator.get_state() {
+                    aggregator::AggregatorState::Finished => {
+                        // 1. make the aggregator idle
+                        self.aggregator.state = aggregator::AggregatorState::Idle;
+                        // 2. set the input buffer to empty
+                        self.input_buffer.current_state = input_buffer::BufferStatus::Empty;
+                        return;
+                    }
+                    _ => {}
                 }
             }
             SystemState::NoInputIter => {

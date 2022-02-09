@@ -1,11 +1,17 @@
-use std::{collections::HashSet, vec};
+use std::{
+    collections::{btree_set::Range, HashSet},
+    vec,
+};
 
 use crate::node_features::NodeFeatures;
+
+use super::{req::Req, sliding_window::Window};
 #[derive(Debug, PartialEq)]
-enum AggregatorState {
+pub enum AggregatorState {
     Idle,
     // the task id and remaining cycles
-    Working(usize, u64),
+    Working(Req, u64),
+    Finished,
 }
 #[derive(Debug)]
 pub struct Aggregator {
@@ -15,7 +21,9 @@ pub struct Aggregator {
     dense_cores: usize,
     dense_width: usize,
 
-    state: AggregatorState,
+    pub state: AggregatorState,
+    current_col_temp_result: Vec<Vec<usize>>,
+    last_col_id: usize,
 }
 
 impl Aggregator {
@@ -24,14 +32,42 @@ impl Aggregator {
         sparse_width: usize,
         dense_cores: usize,
         dense_width: usize,
+        total_nodes: usize,
     ) -> Aggregator {
+        let mut current_col_temp_result = vec![vec![]; total_nodes];
         Aggregator {
+            current_col_temp_result,
             sparse_cores,
             sparse_width,
             dense_cores,
             dense_width,
             state: AggregatorState::Idle,
+            last_col_id: 0,
         }
+    }
+
+    pub fn add_task(&mut self, task: &Window, node_features: &NodeFeatures) {
+        let col_id = task.get_task_id().col_id;
+        if col_id != self.last_col_id {
+            self.last_col_id = col_id;
+            self.current_col_temp_result
+                .iter_mut()
+                .for_each(|v| v.clear());
+        }
+        let tasks = task.get_tasks().clone();
+        // collect tasks to Vec<Vec<usize>>
+        let output_node_ids = task.get_output_node_ids();
+        let cycles = self.get_add_sparse_cycle(
+            tasks,
+            &mut self.current_col_temp_result,
+            output_node_ids,
+            node_features,
+        );
+
+        self.state = AggregatorState::Working(task.get_task_id().clone(), cycles);
+    }
+    pub fn get_state(&self) -> &AggregatorState {
+        &self.state
     }
 
     ///
@@ -69,16 +105,21 @@ impl Aggregator {
     /// ```
     ///
     ///
-    pub fn add_sparse(
+    pub fn get_add_sparse_cycle(
         &self,
-        tasks: Vec<Vec<usize>>,
+        tasks: Vec<Range<usize>>,
         output_node_features: &mut Vec<Vec<usize>>,
+        output_node_ids: &Vec<usize>,
         node_features: &NodeFeatures,
     ) -> u64 {
         // each task's cycles
         let mut cycle_vec = Vec::new();
-        for (task, temp) in tasks.iter().zip(output_node_features.iter_mut()) {
-            cycle_vec.push(self.get_add_cycle_and_result_sparse(task, temp, node_features));
+        for (task, &temp) in tasks.into_iter().zip(output_node_ids.iter()) {
+            cycle_vec.push(self.get_add_cycle_and_result_sparse(
+                task,
+                output_node_features.get_mut(temp).unwrap(),
+                node_features,
+            ));
         }
 
         // each cores current cycles, always push task to the core with the least cycles
@@ -125,7 +166,7 @@ impl Aggregator {
     ///
     fn get_add_cycle_and_result_sparse(
         &self,
-        input_nodes: &Vec<usize>,
+        input_nodes: Range<usize>,
         output_node_feature: &mut Vec<usize>,
         node_features: &NodeFeatures,
     ) -> u64 {
@@ -167,93 +208,87 @@ impl Aggregator {
     ///
     pub fn cycle(&mut self) {
         match self.state {
-            AggregatorState::Idle => {
-                // do nothing
-            }
             AggregatorState::Working(task_id, remaining_cycles) => {
                 if remaining_cycles == 0 {
-                    self.state = AggregatorState::Idle;
+                    self.state = AggregatorState::Finished;
                 } else {
                     self.state = AggregatorState::Working(task_id, remaining_cycles - 1);
                 }
             }
+            _ => {}
         }
-    }
-
-    pub fn add_work(&mut self, task_id: usize, cycles: u64) {
-        assert_eq!(self.state, AggregatorState::Idle);
-        self.state = AggregatorState::Working(task_id, cycles);
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::node_features::NodeFeatures;
-    use std::fs::File;
-    use std::io::Write;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use crate::node_features::NodeFeatures;
+//     use std::fs::File;
+//     use std::io::Write;
 
-    #[test]
-    fn test_sparse_add_single_output() {
-        let data = "0 0 1 0 1 0\n1 0 0 1 1 1\n1 1 0 0 0 1\n";
-        let file_name = "test_data/node_features.txt";
-        let mut file = File::create(file_name).unwrap();
-        file.write_all(data.as_bytes()).unwrap();
+//     #[test]
+//     fn test_sparse_add_single_output() {
+//         let data = "0 0 1 0 1 0\n1 0 0 1 1 1\n1 1 0 0 0 1\n";
+//         let file_name = "test_data/node_features.txt";
+//         let mut file = File::create(file_name).unwrap();
+//         file.write_all(data.as_bytes()).unwrap();
 
-        let node_features = NodeFeatures::from(file_name);
+//         let node_features = NodeFeatures::from(file_name);
 
-        let aggregator = Aggregator::new(2, 2, 2, 2);
-        let input_node = vec![0, 1];
-        let mut output_node_feature = vec![0, 3, 5];
-        let cycles = aggregator.get_add_cycle_and_result_sparse(
-            &input_node,
-            &mut output_node_feature,
-            &node_features,
-        );
-        // will be 3+2+5+4=14
-        assert_eq!(cycles, 14);
-        // after first round, will be [0,2,3,4,5], after second round , will be the same.
-        assert_eq!(
-            output_node_feature.iter().collect::<HashSet<_>>(),
-            vec![0, 2, 3, 4, 5].iter().collect()
-        );
-    }
+//         let aggregator = Aggregator::new(2, 2, 2, 2,3);
+//         let input_node = vec![0, 1];
+//         let mut output_node_feature = vec![0, 3, 5];
+//         let cycles = aggregator.get_add_cycle_and_result_sparse(
+//             &input_node,
 
-    #[test]
-    fn test_sparse_add() {
-        let data = "0 0 1 0 1 0\n1 0 0 1 1 1\n1 1 0 0 0 1\n";
-        let file_name = "test_data/node_features.txt";
-        let mut file = File::create(file_name).unwrap();
-        file.write_all(data.as_bytes()).unwrap();
+//             &mut output_node_feature,
+//             &node_features,
+//         );
+//         // will be 3+2+5+4=14
+//         assert_eq!(cycles, 14);
+//         // after first round, will be [0,2,3,4,5], after second round , will be the same.
+//         assert_eq!(
+//             output_node_feature.iter().collect::<HashSet<_>>(),
+//             vec![0, 2, 3, 4, 5].iter().collect()
+//         );
+//     }
 
-        let node_features = NodeFeatures::from(file_name);
+//     #[test]
+//     fn test_sparse_add() {
+//         let data = "0 0 1 0 1 0\n1 0 0 1 1 1\n1 1 0 0 0 1\n";
+//         let file_name = "test_data/node_features.txt";
+//         let mut file = File::create(file_name).unwrap();
+//         file.write_all(data.as_bytes()).unwrap();
 
-        let aggregator = Aggregator::new(2, 2, 2, 2);
-        let tasks = vec![vec![0, 1], vec![1, 2], vec![0, 1, 2]];
-        let mut output_node_features = vec![vec![0, 3, 5], vec![0, 3, 5], vec![]];
-        let cycles = aggregator.add_sparse(tasks, &mut output_node_features, &node_features);
-        // the first one will be 3+2+5+4=14, the second one will be 3+4+4+3=14, the third one will be 0+2+2+4+5+3=16
-        assert_eq!(cycles, 30);
-    }
+//         let node_features = NodeFeatures::from(file_name);
 
-    #[test]
-    fn test_dense_add() {
-        let aggregator = Aggregator::new(2, 2, 2, 2);
+//         let aggregator = Aggregator::new(2, 2, 2, 2);
+//         let tasks = vec![vec![0, 1], vec![1, 2], vec![0, 1, 2]];
+//         let mut output_node_features = vec![vec![0, 3, 5], vec![0, 3, 5], vec![]];
+//         let cycles = aggregator.add_sparse(tasks, &mut output_node_features, &node_features);
+//         // the first one will be 3+2+5+4=14, the second one will be 3+4+4+3=14, the third one will be 0+2+2+4+5+3=16
+//         assert_eq!(cycles, 30);
+//     }
 
-        let cycles = aggregator.add_dense(10, 10);
-        assert_eq!(cycles, 75);
-    }
+//     #[test]
+//     fn test_dense_add() {
+//         let aggregator = Aggregator::new(2, 2, 2, 2);
 
-    #[test]
-    fn test_cycle() {
-        let mut aggregator = Aggregator::new(2, 2, 2, 2);
-        let task_cycle = aggregator.add_dense(10, 10);
-        aggregator.add_work(0, task_cycle);
-        aggregator.cycle();
-        assert_eq!(aggregator.state, AggregatorState::Working(0, 74));
-        for _i in 0..100 {
-            aggregator.cycle();
-        }
-        assert_eq!(aggregator.state, AggregatorState::Idle);
-    }
-}
+//         let cycles = aggregator.add_dense(10, 10);
+//         assert_eq!(cycles, 75);
+//     }
+
+//     #[test]
+//     fn test_cycle() {
+//         let mut aggregator = Aggregator::new(2, 2, 2, 2);
+//         let task_cycle = aggregator.add_dense(10, 10);
+//         aggregator.add_work(0, task_cycle);
+//         aggregator.cycle();
+//         assert_eq!(aggregator.state, AggregatorState::Working(0, 74));
+//         for _i in 0..100 {
+//             aggregator.cycle();
+//         }
+//         assert_eq!(aggregator.state, AggregatorState::Idle);
+//     }
+// }

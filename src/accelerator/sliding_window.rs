@@ -6,6 +6,7 @@ use std::{cmp::min, collections::btree_set::Range};
 pub struct Window<'a> {
     task_id: Req,
     tasks: Vec<Range<'a, usize>>,
+    output_node_ids: Vec<usize>,
     pub start_x: usize,
     pub start_y: usize,
     pub end_x: usize,
@@ -19,8 +20,10 @@ impl<'a> Window<'a> {
         start_y: usize,
         end_x: usize,
         end_y: usize,
+        output_node_ids: Vec<usize>,
     ) -> Window<'a> {
         Window {
+            output_node_ids,
             task_id,
             tasks,
             start_x,
@@ -40,6 +43,9 @@ impl<'a> Window<'a> {
     }
     pub fn get_location_y(&self) -> (usize, usize) {
         (self.start_y, self.end_y)
+    }
+    pub fn get_output_node_ids(&self) -> &Vec<usize> {
+        &self.output_node_ids
     }
 }
 
@@ -184,6 +190,7 @@ impl<'a> Iterator for InputWindowIterator<'a> {
             // build the current window
             let csc = self.graph.get_csc();
             let mut tasks = Vec::new();
+            let mut output_node_ids = Vec::new();
             for i in self.start_y..self.end_y {
                 let task = csc
                     .get(i)
@@ -191,6 +198,7 @@ impl<'a> Iterator for InputWindowIterator<'a> {
                     .range(self.current_window_start_x..self.current_window_end_x);
 
                 tasks.push(task);
+                output_node_ids.push(i);
             }
             let current_window = Window {
                 task_id: Req::new(
@@ -198,6 +206,7 @@ impl<'a> Iterator for InputWindowIterator<'a> {
                     self.task_id.row_id,
                     self.task_id.layer_id,
                 ),
+                output_node_ids,
                 tasks,
                 start_x: self.current_window_start_x,
                 start_y: self.start_y,

@@ -1,11 +1,13 @@
 [package]
+edition = "2021"
 name = "gcn_agg"
 version = "0.1.0"
-edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ramulator-wrapper={path="../ramulator-wrapper"}
-itertools="*"
-lazy_static="*"
+enum-as-inner = "0.3"
+itertools = "0.10"
+lazy_static = "1.4"
+ramulator_wrapper = {path = "../ramulator_wrapper"}
+
