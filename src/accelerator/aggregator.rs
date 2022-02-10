@@ -5,12 +5,12 @@ use std::{
 
 use crate::node_features::NodeFeatures;
 
-use super::{req::Req, sliding_window::Window};
+use super::{agg_buffer::AggBuffer, component::Component, req::WindowId, sliding_window::Window};
 #[derive(Debug, PartialEq)]
 pub enum AggregatorState {
     Idle,
     // the task id and remaining cycles
-    Working(Req, u64),
+    Working,
     Finished,
 }
 #[derive(Debug)]
@@ -24,6 +24,31 @@ pub struct Aggregator {
     pub state: AggregatorState,
     current_col_temp_result: Vec<Vec<usize>>,
     last_col_id: usize,
+    current_task_id: Option<WindowId>,
+    current_task_remaining_cycles: u64,
+}
+
+
+impl Component for Aggregator {
+    /// # Description
+    ///  the cycle function
+    /// # Example
+    /// ```ignore
+    /// aggregator.cycle();
+    /// ```
+    ///
+    fn cycle(&mut self) {
+        match self.state {
+            AggregatorState::Working => {
+                if self.current_task_remaining_cycles == 0 {
+                    self.state = AggregatorState::Finished;
+                } else {
+                    self.current_task_remaining_cycles -= 1;
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Aggregator {
@@ -43,6 +68,8 @@ impl Aggregator {
             dense_width,
             state: AggregatorState::Idle,
             last_col_id: 0,
+            current_task_id: None,
+            current_task_remaining_cycles: 0,
         }
     }
 
@@ -57,14 +84,11 @@ impl Aggregator {
         let tasks = task.get_tasks().clone();
         // collect tasks to Vec<Vec<usize>>
         let output_node_ids = task.get_output_node_ids();
-        let cycles = self.get_add_sparse_cycle(
-            tasks,
-            &mut self.current_col_temp_result,
-            output_node_ids,
-            node_features,
-        );
+        let cycles = self.get_add_sparse_cycle(tasks, output_node_ids, node_features);
 
-        self.state = AggregatorState::Working(task.get_task_id().clone(), cycles);
+        self.state = AggregatorState::Working;
+        self.current_task_id = Some(task.get_task_id().clone());
+        self.current_task_remaining_cycles = cycles;
     }
     pub fn get_state(&self) -> &AggregatorState {
         &self.state
@@ -106,20 +130,15 @@ impl Aggregator {
     ///
     ///
     pub fn get_add_sparse_cycle(
-        &self,
+        &mut self,
         tasks: Vec<Range<usize>>,
-        output_node_features: &mut Vec<Vec<usize>>,
         output_node_ids: &Vec<usize>,
         node_features: &NodeFeatures,
     ) -> u64 {
         // each task's cycles
         let mut cycle_vec = Vec::new();
-        for (task, &temp) in tasks.into_iter().zip(output_node_ids.iter()) {
-            cycle_vec.push(self.get_add_cycle_and_result_sparse(
-                task,
-                output_node_features.get_mut(temp).unwrap(),
-                node_features,
-            ));
+        for (task, &output_id) in tasks.into_iter().zip(output_node_ids.iter()) {
+            cycle_vec.push(self.get_add_cycle_and_result_sparse(output_id, task, node_features));
         }
 
         // each cores current cycles, always push task to the core with the least cycles
@@ -165,13 +184,13 @@ impl Aggregator {
     /// ```
     ///
     fn get_add_cycle_and_result_sparse(
-        &self,
+        &mut self,
+        output_id: usize,
         input_nodes: Range<usize>,
-        output_node_feature: &mut Vec<usize>,
         node_features: &NodeFeatures,
     ) -> u64 {
         let mut cycles = 0;
-
+        let output_node_feature = &mut self.current_col_temp_result[output_id];
         // type 1, simplely add the features one by one
         let mut temp_set: HashSet<usize> = output_node_feature.iter().cloned().collect();
 
@@ -197,26 +216,6 @@ impl Aggregator {
         // for each round, need an extra cycle to load the data and send back the data
         cycles *= 3;
         cycles as u64
-    }
-
-    /// # Description
-    ///  the cycle function
-    /// # Example
-    /// ```ignore
-    /// aggregator.cycle();
-    /// ```
-    ///
-    pub fn cycle(&mut self) {
-        match self.state {
-            AggregatorState::Working(task_id, remaining_cycles) => {
-                if remaining_cycles == 0 {
-                    self.state = AggregatorState::Finished;
-                } else {
-                    self.state = AggregatorState::Working(task_id, remaining_cycles - 1);
-                }
-            }
-            _ => {}
-        }
     }
 }
 

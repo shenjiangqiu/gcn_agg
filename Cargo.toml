@@ -9,5 +9,6 @@ version = "0.1.0"
 enum-as-inner = "0.3"
 itertools = "0.10"
 lazy_static = "1.4"
+log = "0.4"
 ramulator_wrapper = {path = "../ramulator_wrapper"}
 

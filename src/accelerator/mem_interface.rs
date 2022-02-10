@@ -2,18 +2,18 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use ramulator_wrapper::RamulatorWrapper;
 
-use super::req::Req;
+use super::{component::Component, req::WindowId};
 
 #[derive(Debug)]
-pub struct MemRequst {
+pub struct MemWindowIdust {
     addr_vec: Vec<u64>,
-    id: Req,
+    id: WindowId,
     is_write: bool,
 }
 
-impl MemRequst {
-    fn new(addr_vec: Vec<u64>, id: Req, is_write: bool) -> Self {
-        MemRequst {
+impl MemWindowIdust {
+    fn new(addr_vec: Vec<u64>, id: WindowId, is_write: bool) -> Self {
+        MemWindowIdust {
             addr_vec,
             id,
             is_write,
@@ -31,26 +31,15 @@ impl MemRequst {
 #[derive(Debug)]
 pub struct MemInterface {
     mem: RamulatorWrapper,
-    send_queue: VecDeque<MemRequst>,
+    send_queue: VecDeque<MemWindowIdust>,
     send_size: usize,
-    recv_queue: VecDeque<Req>,
+    recv_queue: VecDeque<WindowId>,
     recv_size: usize,
-    current_waiting_request: HashMap<Req, HashSet<u64>>,
-    current_waiting_mem_request: HashMap<u64, HashSet<Req>>,
+    current_waiting_request: HashMap<WindowId, HashSet<u64>>,
+    current_waiting_mem_request: HashMap<u64, HashSet<WindowId>>,
 }
 
-impl MemInterface {
-    pub fn new(send_size: usize, recv_size: usize) -> Self {
-        MemInterface {
-            mem: RamulatorWrapper::new(),
-            send_queue: VecDeque::new(),
-            send_size,
-            recv_queue: VecDeque::new(),
-            recv_size,
-            current_waiting_request: HashMap::new(),
-            current_waiting_mem_request: HashMap::new(),
-        }
-    }
+impl Component for MemInterface {
     /// # Description
     /// this is the cycle function that do two things:
     /// 1. send requests to memory
@@ -61,20 +50,20 @@ impl MemInterface {
     /// when the recv queue is not full and self.mem is ret_available, receive the first response from memory,
     /// note that: need to delete the request from current_waiting_request and current_waiting_mem_request
     ///
-    pub fn cycle(&mut self) {
+    fn cycle(&mut self) {
         if self.send_queue.len() > 0 {
             let req = self.send_queue.front_mut().unwrap();
             while let Some(addr) = req.addr_vec.pop() {
                 if self.mem.available(addr, req.is_write) {
                     self.mem.send(addr, req.is_write);
                     self.current_waiting_request
-                        .entry(req.id)
+                        .entry(req.id.clone())
                         .or_insert(HashSet::new())
                         .insert(addr);
                     self.current_waiting_mem_request
                         .entry(addr)
                         .or_insert(HashSet::new())
-                        .insert(req.id);
+                        .insert(req.id.clone());
                 } else {
                     req.addr_vec.push(addr);
                     break;
@@ -99,6 +88,20 @@ impl MemInterface {
         }
         self.mem.cycle();
     }
+}
+
+impl MemInterface {
+    pub fn new(send_size: usize, recv_size: usize) -> Self {
+        MemInterface {
+            mem: RamulatorWrapper::new(),
+            send_queue: VecDeque::new(),
+            send_size,
+            recv_queue: VecDeque::new(),
+            recv_size,
+            current_waiting_request: HashMap::new(),
+            current_waiting_mem_request: HashMap::new(),
+        }
+    }
     /// # Description
     /// * is the interface ready to receive a request
     pub fn available(&self) -> bool {
@@ -111,21 +114,22 @@ impl MemInterface {
     }
     /// # Description
     /// * send a request to memory
-    pub fn send(&mut self, id_: Req, addr_vec: Vec<u64>, is_write: bool) {
+    pub fn send(&mut self, id_: WindowId, addr_vec: Vec<u64>, is_write: bool) {
         self.send_queue
-            .push_back(MemRequst::new(addr_vec, id_, is_write));
+            .push_back(MemWindowIdust::new(addr_vec, id_, is_write));
     }
     /// # Description
     /// * receive a response from memory and keep the request ***still in mem(not pop it)***
     #[allow(dead_code)]
-    pub fn receive(&self) -> Req {
-        let req = *self.recv_queue.front().unwrap();
-        req
+    pub fn receive(&self) -> WindowId {
+        todo!("should be here");
+        let req = self.recv_queue.front().unwrap();
+        req.clone()
     }
     /// # Description
     /// * receive a response from memory and pop that request
     #[allow(dead_code)]
-    pub fn receive_pop(&mut self) -> Req {
+    pub fn receive_pop(&mut self) -> WindowId {
         let req = self.recv_queue.pop_front().unwrap();
         req
     }
@@ -134,14 +138,15 @@ impl MemInterface {
 #[cfg(test)]
 mod tests {
 
-    use crate::accelerator::req::Req;
+    use crate::accelerator::req::WindowId;
+    use super::*;
 
     #[test]
     fn test_mem_interface() {
         let mut mem_interface = super::MemInterface::new(1, 1);
         assert_eq!(mem_interface.available(), true);
         assert_eq!(mem_interface.ret_ready(), false);
-        mem_interface.send(Req::new(1, 1, 1), vec![0], false);
+        mem_interface.send(WindowId::new(1, 1, 1), vec![0], false);
         assert_eq!(mem_interface.available(), false);
         assert_eq!(mem_interface.ret_ready(), false);
 
@@ -153,7 +158,7 @@ mod tests {
         assert_eq!(mem_interface.ret_ready(), true);
 
         let result = mem_interface.receive();
-        assert_eq!(result, Req::new(1, 1, 1));
+        assert_eq!(result, WindowId::new(1, 1, 1));
         assert_eq!(mem_interface.current_waiting_mem_request.is_empty(), true);
         assert_eq!(mem_interface.current_waiting_request.is_empty(), true);
     }

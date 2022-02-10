@@ -6,3 +6,5 @@ pub mod output_buffer;
 pub mod agg_buffer;
 pub mod sliding_window;
 pub mod req;
+pub mod mlp;
+pub mod component;

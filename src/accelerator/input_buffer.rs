@@ -1,4 +1,4 @@
-use super::{req::Req, sliding_window::Window};
+use super::{component::Component, req::WindowId, sliding_window::Window};
 use std::mem::swap;
 #[derive(Debug, Clone)]
 pub enum BufferStatus {
@@ -15,15 +15,7 @@ pub struct InputBuffer<'a> {
     pub current_window: Option<Window<'a>>,
     pub next_window: Option<Window<'a>>,
 }
-impl<'a> InputBuffer<'a> {
-    pub fn new() -> Self {
-        InputBuffer {
-            current_state: BufferStatus::Empty,
-            next_state: BufferStatus::Empty,
-            current_window: None,
-            next_window: None,
-        }
-    }
+impl Component for InputBuffer<'_> {
     /// # Description
     /// simply swap the current and next state when current state is Empty
     ///
@@ -46,7 +38,7 @@ impl<'a> InputBuffer<'a> {
     ///
     /// ```
     ///
-    pub fn cycle(&mut self) {
+    fn cycle(&mut self) {
         match (&self.current_state, &self.next_state) {
             // both are empty, do nothing
             (BufferStatus::Empty, BufferStatus::Empty) => {}
@@ -56,6 +48,17 @@ impl<'a> InputBuffer<'a> {
             }
             // current is not empty, do nothing
             _ => {}
+        }
+    }
+}
+
+impl<'a> InputBuffer<'a> {
+    pub fn new() -> Self {
+        InputBuffer {
+            current_state: BufferStatus::Empty,
+            next_state: BufferStatus::Empty,
+            current_window: None,
+            next_window: None,
         }
     }
 
@@ -75,13 +78,13 @@ impl<'a> InputBuffer<'a> {
     /// assert_eq!(input_buffer.next_state, BufferStatus::Ready(1));
     ///
     /// ```
-    pub fn receive(&mut self, id_: &Req) {
+    pub fn receive(&mut self, id_: &WindowId) {
         // test if id match any
         match (
-            self.current_state,
-            self.current_window,
-            self.next_state,
-            self.next_window,
+            &self.current_state,
+            &self.current_window,
+            &self.next_state,
+            &self.next_window,
         ) {
             // match current is loading and current window's id match
             (
@@ -90,7 +93,7 @@ impl<'a> InputBuffer<'a> {
                     task_id: ref id, ..
                 }),
                 ..,
-            ) if id == id_ => {
+            ) if id.as_ref() == id_ => {
                 self.current_state = BufferStatus::Ready;
             }
 
@@ -101,7 +104,7 @@ impl<'a> InputBuffer<'a> {
                 Some(Window {
                     task_id: ref id, ..
                 }),
-            ) if id == id_ => {
+            ) if id.as_ref() == id_ => {
                 self.next_state = BufferStatus::Ready;
             }
 
@@ -203,16 +206,14 @@ impl<'a> InputBuffer<'a> {
         }
     }
 
-    pub fn get_current_id(&self) -> Option<&Req> {
-        match self.current_window {
-            Some(Window {
-                task_id: ref id, ..
-            }) => Some(id),
+    pub fn get_current_id(&self) -> Option<&WindowId> {
+        match &self.current_window {
+            Some(Window { task_id: id, .. }) => Some(id.as_ref()),
             None => None,
         }
     }
 
-    pub fn get_next_id(&self) -> Option<&Req> {
+    pub fn get_next_id(&self) -> Option<&WindowId> {
         match self.next_window {
             Some(Window {
                 task_id: ref id, ..
@@ -244,25 +245,15 @@ impl<'a> InputBuffer<'a> {
     }
 
     pub fn get_current_layer(&self) -> Option<usize> {
-        match self.current_window {
-            Some(Window {
-                task_id: Req {
-                    layer_id: layer_id, ..
-                },
-                ..
-            }) => Some(layer_id),
+        match &self.current_window {
+            Some(Window { task_id, .. }) => Some(task_id.as_ref().layer_id),
             None => None,
         }
     }
 
     pub fn get_next_layer(&self) -> Option<usize> {
-        match self.next_window {
-            Some(Window {
-                task_id: Req {
-                    layer_id: layer_id, ..
-                },
-                ..
-            }) => Some(layer_id),
+        match &self.next_window {
+            Some(Window { task_id, .. }) => Some(task_id.as_ref().layer_id),
             None => None,
         }
     }

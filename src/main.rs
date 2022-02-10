@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::Write;
 
 use gcn_agg::accelerator::system::System;
+use gcn_agg::node_features;
 use gcn_agg::{graph::Graph, node_features::NodeFeatures};
 use ramulator_wrapper;
 fn main() {
@@ -16,9 +17,11 @@ fn main() {
 
     let mut graph = Graph::from(graph_name);
     let mut node_features = NodeFeatures::from(features_name);
+    let mut node_features = vec![&node_features];
+    let gcn_hidden_size = vec![2, 2];
     let mut system = System::new(
         &graph,
-        &node_features,
+        node_features,
         1,
         1,
         1,
@@ -27,7 +30,7 @@ fn main() {
         100,
         100,
         1,
-        vec![1, 1],
+        &gcn_hidden_size,
     );
     system.run();
 }

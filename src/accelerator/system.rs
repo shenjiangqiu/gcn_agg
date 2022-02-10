@@ -1,3 +1,15 @@
+use super::component::Component;
+use super::mlp::{Mlp, self};
+use super::output_buffer;
+use super::{
+    agg_buffer::{self, AggBuffer},
+    aggregator::{self, Aggregator},
+    input_buffer::{self, InputBuffer},
+    mem_interface::MemInterface,
+    output_buffer::OutputBuffer,
+    sliding_window::{InputWindowIterator, OutputWindowIterator, Window},
+};
+use log::{debug, info, trace};
 /// # Description
 /// the state for the system
 /// * `Idle` means this is the very first of each layer, need to init the new output and input iter
@@ -12,16 +24,8 @@ enum SystemState {
     Finished,
 }
 
-use super::{
-    agg_buffer::AggBuffer,
-    aggregator::{self, Aggregator},
-    input_buffer::{self, InputBuffer},
-    mem_interface::MemInterface,
-    output_buffer::OutputBuffer,
-    sliding_window::{InputWindowIterator, OutputWindowIterator, Window},
-};
-
 use crate::{graph::Graph, node_features::NodeFeatures};
+
 #[derive(Debug)]
 pub struct System<'a> {
     state: SystemState,
@@ -29,9 +33,11 @@ pub struct System<'a> {
     total_cycle: u64,
     aggregator: Aggregator,
     input_buffer: InputBuffer<'a>,
-    output_buffer: OutputBuffer,
-    agg_buffer: AggBuffer,
+    output_buffer: OutputBuffer<'a>,
+    agg_buffer: AggBuffer<'a>,
     mem_interface: MemInterface,
+    mlp:Mlp,
+
     graph: &'a Graph,
     node_features: Vec<&'a NodeFeatures>,
 
@@ -43,114 +49,16 @@ pub struct System<'a> {
     current_input_iter: InputWindowIterator<'a>,
     current_window: Option<Window<'a>>,
     gcn_layer_num: usize,
-    gcn_hidden_size: Vec<usize>,
+    gcn_hidden_size: &'a Vec<usize>,
 }
 
-impl<'a> System<'a> {
-    pub fn new(
-        graph: &'a Graph,
-        node_features: Vec<&'a NodeFeatures>,
-        sparse_cores: usize,
-        spase_width: usize,
-        dense_cores: usize,
-        dense_width: usize,
-        input_buffer_size: usize,
-        agg_buffer_size: usize,
-        output_buffer_size: usize,
-        gcn_layer_num: usize,
-        gcn_hidden_size: Vec<usize>,
-    ) -> System<'a> {
-        let aggregator = Aggregator::new(sparse_cores, spase_width, dense_cores, dense_width);
-
-        let input_buffer = InputBuffer::new();
-        let output_buffer = OutputBuffer::new();
-        let agg_buffer = AggBuffer::new();
-        let mem_interface = MemInterface::new(64, 64);
-        let mut current_output_iter = OutputWindowIterator::new(
-            graph,
-            node_features.get(0).expect("node_features is empty"),
-            agg_buffer_size,
-            input_buffer_size,
-            0,
-        );
-        let mut current_input_iter = current_output_iter
-            .next()
-            .expect("cannot build the first input iter");
-        let current_window = Some(
-            current_input_iter
-                .next()
-                .expect("cannot build the first window"),
-        );
-
-        let state = SystemState::Working;
-        System {
-            state,
-            finished: false,
-            total_cycle: 0,
-            aggregator,
-            input_buffer,
-            output_buffer,
-            agg_buffer,
-            mem_interface,
-            graph,
-            node_features,
-            input_buffer_size,
-            agg_buffer_size,
-            output_buffer_size,
-            current_layer: 0,
-            current_output_iter,
-            current_input_iter,
-            current_window,
-            gcn_layer_num,
-            gcn_hidden_size,
-        }
-    }
-
-    pub fn move_to_next_window(&mut self) {
-        // go through the current_input_iter and current_output_iter to get the next window
-        // if the current_input_iter is finished, then get the next input iter
-        // if the current_output_iter is finished, then get the next output iter
-        // if both are finished, then the system is finished
-
-        let mut next_window = None;
-        while next_window.is_none() {
-            if let Some(window) = self.current_input_iter.next() {
-                next_window = Some(window);
-            } else if let Some(input_iter) = self.current_output_iter.next() {
-                self.current_input_iter = input_iter;
-                next_window = self.current_input_iter.next();
-            } else {
-                // need to move to the next layer and reset the output iter
-                self.current_layer += 1;
-                if self.current_layer >= self.gcn_layer_num {
-                    self.finished = true;
-                    self.state = SystemState::Finished;
-                    return;
-                }
-                self.current_output_iter = OutputWindowIterator::new(
-                    self.graph,
-                    self.node_features.get(self.current_layer).expect(
-                        format!("node_features is empty, layer: {}", self.current_layer).as_str(),
-                    ),
-                    self.agg_buffer_size,
-                    self.input_buffer_size,
-                    self.current_layer,
-                );
-                self.current_input_iter = self
-                    .current_output_iter
-                    .next()
-                    .expect("cannot build the first input iter");
-                next_window = self.current_input_iter.next();
-            }
-        }
-    }
-
+impl Component for System<'_> {
     /// # Description
     /// * this function will schedule the requests of memory and aggregator
     /// * will update each component's status
     /// * will ***NOT*** update the cycle
     ///
-    pub fn cycle(&mut self) {
+    fn cycle(&mut self) {
         match &self.state {
             SystemState::Working => {
                 self.aggregator.cycle();
@@ -170,6 +78,7 @@ impl<'a> System<'a> {
                         self.move_to_next_window();
                         return;
                     }
+                    // need to send request to memory
                     input_buffer::BufferStatus::WaitingToLoad => {
                         if self.mem_interface.available() {
                             // generate addr from the req and window
@@ -180,7 +89,7 @@ impl<'a> System<'a> {
                                 .get_current_window()
                                 .expect("no window in input buffer");
                             let window_layer = window.get_task_id().layer_id;
-                            let start_addrs = self
+                            let start_addrs = &self
                                 .node_features
                                 .get(window_layer)
                                 .expect("no such layer in nodefeatures")
@@ -224,7 +133,7 @@ impl<'a> System<'a> {
                                 .get_current_window()
                                 .expect("no window in input buffer");
                             let window_layer = window.get_task_id().layer_id;
-                            let start_addrs = self
+                            let start_addrs = &self
                                 .node_features
                                 .get(window_layer)
                                 .expect("no such layer in nodefeatures")
@@ -259,18 +168,36 @@ impl<'a> System<'a> {
                 match (
                     self.input_buffer.get_current_state(),
                     self.aggregator.get_state(),
+                    &self.agg_buffer.current_state,
                 ) {
-                    (input_buffer::BufferStatus::Ready, aggregator::AggregatorState::Idle) => {
-                        let current_window=self.input_buffer.get_current_window().unwrap();
-                        let window_layer = current_window.get_task_id().layer_id;
-                        self.aggregator.add_task(
-                            current_window,
-                            self.node_features.get(window_layer).unwrap(),
+                    (
+                        input_buffer::BufferStatus::Ready,
+                        aggregator::AggregatorState::Idle,
+                        agg_buffer::BufferStatus::Empty | agg_buffer::BufferStatus::Writing,
+                    ) => {
+                        // start the aggregator
+                        debug!(
+                            "start the aggregator,agg window: {:?}",
+                            self.input_buffer.get_current_window()
                         );
-                        self.agg_buffer.add_task(current_window);
-                        
-                        self.input_buffer.current_state = input_buffer::BufferStatus::Reading;
-                        return;
+                        let current_window = self.input_buffer.get_current_window().unwrap();
+                        let window_layer = current_window.get_task_id().layer_id;
+
+                        match self.agg_buffer.add_task(current_window) {
+                            Ok(_) => {
+                                // start the aggregator
+                                self.aggregator.add_task(
+                                    current_window,
+                                    self.node_features.get(window_layer).unwrap(),
+                                );
+                                self.input_buffer.current_state =
+                                    input_buffer::BufferStatus::Reading;
+                                return;
+                            }
+                            Err(_) => {
+                                // the aggbuffer need some time to finish current task
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -286,54 +213,151 @@ impl<'a> System<'a> {
                     }
                     _ => {}
                 }
-            }
-            SystemState::NoInputIter => {
-                // which means the OutputWindowIterator is finished, and cannot generate any more InputWindowIterator,
-                // So we need to get the next OutputWindowIterator(chagne the next layer and create a new OutputWindowIterator)
-                self.current_layer += 1;
-                if self.current_layer == self.gcn_layer_num {
-                    self.state = SystemState::Finished;
-                    return;
+                // test if start the mlp
+                match (self.agg_buffer.get_next_state(), self.mlp.state,self.output_buffer.current_state){
+                    (
+                        agg_buffer::BufferStatus::WaitingToMlp,
+                        mlp::MlpState::Idle,
+                        output_buffer::BufferStatus::Empty,
+                    ) => {
+                        // start the mlp
+                        let current_window = self.agg_buffer.get_current_window().unwrap();
+                        let window_layer = current_window.get_task_id().layer_id;
+                        self.mlp.add_task(
+                            current_window,
+                            self.node_features.get(window_layer).unwrap(),
+                        );
+                        self.agg_buffer.current_state = agg_buffer::BufferStatus::Mlp;
+                        self.mlp.start_mlp(current_window, output_results)
+                        
+                        return;
+                    }
+                    _ => {}
                 }
-                self.current_output_iter = Some(OutputWindowIterator::new(
-                    self.graph,
-                    self.node_features,
-                    self.agg_buffer_size,
-                    self.input_buffer_size,
-                    self.current_layer,
-                ));
-                // rebuild the input iter and window
-                self.current_input_iter = self.current_output_iter.as_mut().unwrap().next();
-                self.current_window = match self.current_input_iter.as_mut() {
-                    Some(iter) => iter.next(),
-                    None => None,
-                };
-                self.state = match self.current_window {
-                    Some(_) => SystemState::Working,
-                    None => match self.current_input_iter {
-                        Some(_) => SystemState::NoWindow,
-                        None => SystemState::NoInputIter,
-                    },
-                };
             }
+
             SystemState::Finished => {
                 self.finished = true;
             }
-            SystemState::NoWindow => {
-                // which mean the current InputWindowIterator is finished, and cannot generate any more Window,
-                // So we need to get the next InputWindowIterator(Get from the OutputWindowIterator)
-                self.current_input_iter = self.current_output_iter.as_mut().unwrap().next();
-                self.current_window = match self.current_input_iter.as_mut() {
-                    Some(iter) => iter.next(),
-                    None => None,
-                };
-                self.state = match self.current_window {
-                    Some(_) => SystemState::Working,
-                    None => match self.current_input_iter {
-                        Some(_) => SystemState::NoWindow,
-                        None => SystemState::NoInputIter,
-                    },
-                };
+            _ => {}
+        }
+    }
+}
+
+impl<'a> System<'a> {
+    pub fn new(
+        graph: &'a Graph,
+        node_features: Vec<&'a NodeFeatures>,
+        sparse_cores: usize,
+        spase_width: usize,
+        dense_cores: usize,
+        dense_width: usize,
+        input_buffer_size: usize,
+        agg_buffer_size: usize,
+        output_buffer_size: usize,
+        gcn_layer_num: usize,
+        gcn_hidden_size: &'a Vec<usize>,
+        systolic_rows: usize,
+        systolic_cols: usize,
+        mlp_sparse_cores: usize,
+    ) -> System<'a> {
+        let aggregator = Aggregator::new(
+            sparse_cores,
+            spase_width,
+            dense_cores,
+            dense_width,
+            graph.total_nodes,
+        );
+
+        let input_buffer = InputBuffer::new();
+        let output_buffer = OutputBuffer::new();
+        let agg_buffer = AggBuffer::new();
+        let mem_interface = MemInterface::new(64, 64);
+        let mlp=Mlp::new(systolic_rows,systolic_cols,mlp_sparse_cores);
+
+        let mut current_output_iter = OutputWindowIterator::new(
+            graph,
+            node_features.get(0).expect("node_features is empty"),
+            agg_buffer_size,
+            input_buffer_size,
+            0,
+            gcn_hidden_size,
+        );
+        let mut current_input_iter = current_output_iter
+            .next()
+            .expect("cannot build the first input iter");
+        let current_window = Some(
+            current_input_iter
+                .next()
+                .expect("cannot build the first window"),
+        );
+
+        let state = SystemState::Working;
+        System {
+            state,
+            finished: false,
+            total_cycle: 0,
+            aggregator,
+            input_buffer,
+            output_buffer,
+            agg_buffer,
+            mem_interface,
+            graph,
+            node_features,
+            input_buffer_size,
+            agg_buffer_size,
+            output_buffer_size,
+            current_layer: 0,
+            current_output_iter,
+            current_input_iter,
+            current_window,
+            gcn_layer_num,
+            gcn_hidden_size,
+            mlp,
+        }
+    }
+    /// # Description
+    /// - this function just move to the next window, or change the layer. ***don't modify any states here***!!!
+    ///
+    /// ---
+    /// sjq
+    pub fn move_to_next_window(&mut self) {
+        // go through the current_input_iter and current_output_iter to get the next window
+        // if the current_input_iter is finished, then get the next input iter
+        // if the current_output_iter is finished, then get the next output iter
+        // if both are finished, then the system is finished
+
+        let mut next_window = None;
+        while next_window.is_none() {
+            if let Some(window) = self.current_input_iter.next() {
+                next_window = Some(window);
+            } else if let Some(input_iter) = self.current_output_iter.next() {
+                // here we moved to the next col
+                self.current_input_iter = input_iter;
+                next_window = self.current_input_iter.next();
+            } else {
+                // need to move to the next layer and reset the output iter
+                self.current_layer += 1;
+                if self.current_layer >= self.gcn_layer_num {
+                    self.finished = true;
+                    self.state = SystemState::Finished;
+                    return;
+                }
+                self.current_output_iter = OutputWindowIterator::new(
+                    self.graph,
+                    self.node_features.get(self.current_layer).expect(
+                        format!("node_features is empty, layer: {}", self.current_layer).as_str(),
+                    ),
+                    self.agg_buffer_size,
+                    self.input_buffer_size,
+                    self.current_layer,
+                    self.gcn_hidden_size,
+                );
+                self.current_input_iter = self
+                    .current_output_iter
+                    .next()
+                    .expect("cannot build the first input iter");
+                next_window = self.current_input_iter.next();
             }
         }
     }
@@ -359,6 +383,7 @@ impl<'a> System<'a> {
 
 #[cfg(test)]
 mod test {
+
     use super::*;
     use std::{fs::File, io::Write};
     #[test]
@@ -371,12 +396,13 @@ mod test {
         let data = "0 0 1 0 1 0\n1 0 0 1 1 1\n1 1 0 0 0 1\n";
         let mut file = File::create("test_data/features.txt").unwrap();
         file.write_all(data.as_bytes()).unwrap();
-        let mut graph = Graph::from(graph_name);
-        let mut node_features = NodeFeatures::from(features_name);
-
+        let graph = Graph::from(graph_name);
+        let node_features = NodeFeatures::from(features_name);
+        let node_features = vec![&node_features];
+        let mut gcn_hidden_size = vec![2, 2];
         let mut system = System::new(
             &graph,
-            &node_features,
+            node_features,
             1,
             1,
             1,
@@ -385,7 +411,7 @@ mod test {
             100,
             100,
             1,
-            vec![1, 1],
+            &gcn_hidden_size,
         );
         system.run();
         assert_eq!(system.finished(), true);

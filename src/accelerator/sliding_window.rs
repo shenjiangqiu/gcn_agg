@@ -1,12 +1,14 @@
-use super::req::Req;
+use super::req::WindowId;
 use crate::{graph::Graph, node_features::NodeFeatures};
-use std::{cmp::min, collections::btree_set::Range};
+use std::{cmp::min, collections::btree_set::Range, rc::Rc};
 
 #[derive(Debug, Clone)]
 pub struct Window<'a> {
-    task_id: Req,
-    tasks: Vec<Range<'a, usize>>,
-    output_node_ids: Vec<usize>,
+    pub task_id: Rc<WindowId>,
+    tasks: Rc<Vec<Range<'a, usize>>>,
+    output_node_ids: Rc<Vec<usize>>,
+    pub input_node_dim: usize,
+    pub output_node_dim: usize,
     pub start_x: usize,
     pub start_y: usize,
     pub end_x: usize,
@@ -14,13 +16,15 @@ pub struct Window<'a> {
 }
 impl<'a> Window<'a> {
     pub fn new(
-        task_id: Req,
-        tasks: Vec<Range<'a, usize>>,
+        task_id: Rc<WindowId>,
+        tasks: Rc<Vec<Range<'a, usize>>>,
         start_x: usize,
         start_y: usize,
         end_x: usize,
         end_y: usize,
-        output_node_ids: Vec<usize>,
+        output_node_ids: Rc<Vec<usize>>,
+        input_node_dim: usize,
+        output_node_dim: usize,
     ) -> Window<'a> {
         Window {
             output_node_ids,
@@ -30,9 +34,11 @@ impl<'a> Window<'a> {
             start_y,
             end_x,
             end_y,
+            input_node_dim,
+            output_node_dim,
         }
     }
-    pub fn get_task_id(&self) -> &Req {
+    pub fn get_task_id(&self) -> &WindowId {
         &self.task_id
     }
     pub fn get_tasks(&self) -> &Vec<Range<'a, usize>> {
@@ -56,7 +62,8 @@ pub struct OutputWindowIterator<'a> {
     agg_buffer_size: usize,
     input_buffer_size: usize,
     current_start_y: usize,
-    task_id: Req,
+    task_id: WindowId,
+    gcn_hidden_size: &'a Vec<usize>,
 }
 impl<'a> OutputWindowIterator<'a> {
     pub fn new(
@@ -65,6 +72,7 @@ impl<'a> OutputWindowIterator<'a> {
         agg_buffer_size: usize,
         input_buffer_size: usize,
         layer: usize,
+        gcn_hidden_size: &'a Vec<usize>,
     ) -> OutputWindowIterator<'a> {
         OutputWindowIterator {
             graph,
@@ -72,11 +80,12 @@ impl<'a> OutputWindowIterator<'a> {
             agg_buffer_size,
             input_buffer_size,
             current_start_y: 0,
-            task_id: Req {
+            task_id: WindowId {
                 layer_id: layer,
                 col_id: 0,
                 row_id: 0,
             },
+            gcn_hidden_size,
         }
     }
 }
@@ -90,12 +99,13 @@ impl<'a> Iterator for OutputWindowIterator<'a> {
         let y_size = self.agg_buffer_size / (self.graph.get_feature_size() * 4);
         let end_y = min(self.current_start_y + y_size, self.graph.get_num_node());
         let intput_iter = InputWindowIterator::new(
-            self.task_id,
+            self.task_id.clone(),
             self.graph,
             self.node_features,
             self.input_buffer_size,
             self.current_start_y,
             end_y,
+            self.gcn_hidden_size,
         );
         self.task_id.col_id += 1;
         self.current_start_y = end_y;
@@ -105,7 +115,7 @@ impl<'a> Iterator for OutputWindowIterator<'a> {
 
 #[derive(Debug)]
 pub struct InputWindowIterator<'a> {
-    task_id: Req,
+    task_id: WindowId,
     graph: &'a Graph,
     node_features: &'a NodeFeatures,
     input_buffer_size: usize,
@@ -114,16 +124,18 @@ pub struct InputWindowIterator<'a> {
     // current window information
     current_window_start_x: usize,
     current_window_end_x: usize,
+    gcn_hidden_size: &'a Vec<usize>,
 }
 // impl new for InputWindowIterator
 impl<'a> InputWindowIterator<'a> {
     fn new(
-        task_id: Req,
+        task_id: WindowId,
         graph: &'a Graph,
         node_features: &'a NodeFeatures,
         input_buffer_size: usize,
         start_y: usize,
         end_y: usize,
+        gcn_hidden_size: &'a Vec<usize>,
     ) -> Self {
         InputWindowIterator {
             task_id,
@@ -134,6 +146,7 @@ impl<'a> InputWindowIterator<'a> {
             end_y,
             current_window_end_x: 0,
             current_window_start_x: 0,
+            gcn_hidden_size,
         }
     }
 }
@@ -200,18 +213,23 @@ impl<'a> Iterator for InputWindowIterator<'a> {
                 tasks.push(task);
                 output_node_ids.push(i);
             }
+            let task_id = Rc::new(WindowId::new(
+                self.task_id.col_id,
+                self.task_id.row_id,
+                self.task_id.layer_id,
+            ));
+            let output_node_ids = Rc::new(output_node_ids);
+            let tasks = Rc::new(tasks);
             let current_window = Window {
-                task_id: Req::new(
-                    self.task_id.col_id,
-                    self.task_id.row_id,
-                    self.task_id.layer_id,
-                ),
+                task_id,
                 output_node_ids,
                 tasks,
                 start_x: self.current_window_start_x,
                 start_y: self.start_y,
                 end_x: self.current_window_end_x,
                 end_y: self.end_y,
+                input_node_dim: *self.gcn_hidden_size.get(self.task_id.layer_id).unwrap(),
+                output_node_dim: *self.gcn_hidden_size.get(self.task_id.layer_id + 1).unwrap(),
             };
 
             // prepare the next start x and start y
@@ -241,8 +259,9 @@ mod test {
 
         let mut graph = Graph::from(graph_name);
         let node_features = NodeFeatures::from(features_name);
-
-        let output_window_iter = OutputWindowIterator::new(&graph, &node_features, 20, 20, 0);
+        let gcn_hidden_size = vec![2, 2];
+        let output_window_iter =
+            OutputWindowIterator::new(&graph, &node_features, 20, 20, 0, &gcn_hidden_size);
         for i in output_window_iter {
             println!("{:?}", i);
             for j in i {
@@ -264,7 +283,8 @@ mod test {
         let mut graph = Graph::from(graph_name);
         let node_features = NodeFeatures::from(features_name);
 
-        let output_window_iter = OutputWindowIterator::new(&graph, &node_features, 16, 32, 0);
+        let output_window_iter =
+            OutputWindowIterator::new(&graph, &node_features, 16, 32, 0, &vec![2, 2]);
 
         let correct_ranges = vec![
             (vec![1usize, 2], vec![2usize]),

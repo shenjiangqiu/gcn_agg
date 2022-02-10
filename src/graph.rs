@@ -7,6 +7,8 @@ pub struct Graph {
     csr: Option<Vec<BTreeSet<usize>>>,
     // the feature size
     feature_size: usize,
+    // the number of nodes
+    pub total_nodes: usize,
 }
 impl From<&str> for Graph {
     /// read the graph from the file
@@ -84,10 +86,12 @@ impl From<&str> for Graph {
             // add the row to the csc format
             csc.push(row);
         }
+        let total_nodes = csc.len();
         let mut graph = Graph {
             csc,
             csr: None,
             feature_size,
+            total_nodes,
         };
         graph.generate_csr();
         graph
