@@ -1,4 +1,4 @@
-use super::{component::Component, req::WindowId, sliding_window::Window};
+use super::{component::Component, window_id::WindowId, sliding_window::InputWindow};
 use std::mem::swap;
 #[derive(Debug, Clone)]
 pub enum BufferStatus {
@@ -12,8 +12,8 @@ pub enum BufferStatus {
 pub struct InputBuffer<'a> {
     pub current_state: BufferStatus,
     pub next_state: BufferStatus,
-    pub current_window: Option<Window<'a>>,
-    pub next_window: Option<Window<'a>>,
+    pub current_window: Option<InputWindow<'a>>,
+    pub next_window: Option<InputWindow<'a>>,
 }
 impl Component for InputBuffer<'_> {
     /// # Description
@@ -38,7 +38,7 @@ impl Component for InputBuffer<'_> {
     ///
     /// ```
     ///
-    fn cycle(&mut self) {
+    fn cycle(&mut self)->Result<(),Box<dyn std::error::Error>> {
         match (&self.current_state, &self.next_state) {
             // both are empty, do nothing
             (BufferStatus::Empty, BufferStatus::Empty) => {}
@@ -49,6 +49,7 @@ impl Component for InputBuffer<'_> {
             // current is not empty, do nothing
             _ => {}
         }
+        Ok(())
     }
 }
 
@@ -89,7 +90,7 @@ impl<'a> InputBuffer<'a> {
             // match current is loading and current window's id match
             (
                 BufferStatus::Loading,
-                Some(Window {
+                Some(InputWindow {
                     task_id: ref id, ..
                 }),
                 ..,
@@ -101,7 +102,7 @@ impl<'a> InputBuffer<'a> {
             (
                 ..,
                 BufferStatus::Loading,
-                Some(Window {
+                Some(InputWindow {
                     task_id: ref id, ..
                 }),
             ) if id.as_ref() == id_ => {
@@ -141,12 +142,12 @@ impl<'a> InputBuffer<'a> {
         }
     }
 
-    pub fn add_task_to_next(&mut self, window: Window<'a>) {
+    pub fn add_task_to_next(&mut self, window: InputWindow<'a>) {
         self.next_state = BufferStatus::WaitingToLoad;
         self.next_window = Some(window);
     }
 
-    pub fn add_task_to_current(&mut self, window: Window<'a>) {
+    pub fn add_task_to_current(&mut self, window: InputWindow<'a>) {
         self.current_state = BufferStatus::WaitingToLoad;
         self.current_window = Some(window);
     }
@@ -208,28 +209,28 @@ impl<'a> InputBuffer<'a> {
 
     pub fn get_current_id(&self) -> Option<&WindowId> {
         match &self.current_window {
-            Some(Window { task_id: id, .. }) => Some(id.as_ref()),
+            Some(InputWindow { task_id: id, .. }) => Some(id.as_ref()),
             None => None,
         }
     }
 
     pub fn get_next_id(&self) -> Option<&WindowId> {
         match self.next_window {
-            Some(Window {
+            Some(InputWindow {
                 task_id: ref id, ..
             }) => Some(id),
             None => None,
         }
     }
 
-    pub fn get_current_window(&self) -> Option<&Window<'a>> {
+    pub fn get_current_window(&self) -> Option<&InputWindow<'a>> {
         match self.current_window {
             Some(ref window) => Some(window),
             None => None,
         }
     }
 
-    pub fn get_next_window(&self) -> Option<&Window<'a>> {
+    pub fn get_next_window(&self) -> Option<&InputWindow<'a>> {
         match self.next_window {
             Some(ref window) => Some(window),
             None => None,
@@ -246,14 +247,14 @@ impl<'a> InputBuffer<'a> {
 
     pub fn get_current_layer(&self) -> Option<usize> {
         match &self.current_window {
-            Some(Window { task_id, .. }) => Some(task_id.as_ref().layer_id),
+            Some(InputWindow { task_id, .. }) => Some(task_id.as_ref().layer_id),
             None => None,
         }
     }
 
     pub fn get_next_layer(&self) -> Option<usize> {
         match &self.next_window {
-            Some(Window { task_id, .. }) => Some(task_id.as_ref().layer_id),
+            Some(InputWindow { task_id, .. }) => Some(task_id.as_ref().layer_id),
             None => None,
         }
     }

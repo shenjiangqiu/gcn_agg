@@ -1,6 +1,6 @@
-use std::{mem::swap, panic::panic_any};
+use std::{mem::swap, rc::Rc};
 
-use super::{sliding_window::Window, component::Component};
+use super::{component::Component, sliding_window::OutputWindow, temp_agg_result::TempAggResult};
 #[derive(Debug, PartialEq)]
 pub enum BufferStatus {
     Empty,
@@ -30,24 +30,30 @@ pub enum BufferStatus {
 ///
 /// ```
 #[derive(Debug)]
-pub struct AggBuffer<'a> {
+pub struct AggBuffer {
     pub current_state: BufferStatus,
     pub next_state: BufferStatus,
-    pub current_window: Option<Window<'a>>,
-    pub next_window: Option<Window<'a>>,
+    pub current_window: Option<Rc<OutputWindow>>,
+    pub next_window: Option<Rc<OutputWindow>>,
+
+    // the temp result for the aggregation, when the aggregation result is finished, empty those temp result
+    pub current_temp_result: Option<TempAggResult>,
+    pub next_temp_result: Option<TempAggResult>,
 }
 
-impl<'a> AggBuffer<'a> {
-    pub fn new() -> Self {
+impl AggBuffer {
+    pub fn new(num_nodes: usize) -> Self {
         AggBuffer {
             current_state: BufferStatus::Empty,
             next_state: BufferStatus::Empty,
             current_window: None,
             next_window: None,
+            current_temp_result: Some(TempAggResult::new(num_nodes)),
+            next_temp_result: Some(TempAggResult::new(num_nodes)),
         }
     }
 }
-impl Component for AggBuffer<'_> {
+impl Component for AggBuffer {
     /// # Description
     /// simply swap the current and next state when current state is Empty
     ///
@@ -70,19 +76,20 @@ impl Component for AggBuffer<'_> {
     ///
     /// ```
     ///
-    fn cycle(&mut self) {
+    fn cycle(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         match (&self.current_state, &self.next_state) {
             (BufferStatus::WaitingToMlp, BufferStatus::Empty) => {
                 swap(&mut self.current_state, &mut self.next_state);
                 swap(&mut self.current_window, &mut self.next_window);
+                // swap temp result
+                swap(&mut self.current_temp_result, &mut self.next_temp_result);
             }
             _ => {}
         }
+        Ok(())
     }
 }
-impl<'a> AggBuffer<'a> {
-
-
+impl AggBuffer {
     /// # Description
     /// - add a new task into current buffer, only when current state is Empty and current window is None this function is called
     /// - if it's current is empty, then add the window to current window, if current is not empty, then test if this window is belong to a new col, if it's the next col
@@ -91,30 +98,9 @@ impl<'a> AggBuffer<'a> {
     /// - don't mess up!
     /// ---
     /// ## ........by sjq
-    pub fn add_task(&mut self, window: &Window<'a>) -> Result<(), &'static str> {
-        match self.current_state {
-            BufferStatus::Empty => {
-                self.current_window = Some(window.clone());
-                self.current_state = BufferStatus::Writing;
-                Ok(())
-            }
-            BufferStatus::Writing => {
-                // test if this window is belong to a new col
-                let current_col_id = self.current_window.as_ref().unwrap().get_task_id().col_id;
-                let new_col_id = window.get_task_id().col_id;
-                if current_col_id != new_col_id {
-                    self.current_state = BufferStatus::WaitingToMlp;
-                    Err("current state is not empty, but the window is belong to a new col")
-                } else {
-                    // do nothing
-                    Ok(())
-                }
-            }
-            _ => {
-                // shouldn't be here
-                panic!("current state is not empty, but the window is belong to a new col")
-            }
-        }
+    pub fn add_task(&mut self, window: Rc<OutputWindow>) {
+        self.current_window = Some(window);
+        self.current_state = BufferStatus::Writing;
     }
 
     pub fn finished_writing(&mut self) {
@@ -145,11 +131,11 @@ impl<'a> AggBuffer<'a> {
     pub fn finish_reading(&mut self) {
         self.next_state = BufferStatus::Empty;
     }
-    pub fn get_current_window(&self) -> Option<&Window<'a>> {
-        self.current_window.as_ref()
+    pub fn get_current_window(&self) -> &Rc<OutputWindow> {
+        &self.current_window.as_ref().unwrap()
     }
-    pub fn get_next_window(&self) -> Option<&Window<'a>> {
-        self.next_window.as_ref()
+    pub fn get_next_window(&self) -> &Rc<OutputWindow> {
+        &self.next_window.as_ref().unwrap()
     }
     pub fn get_current_state(&self) -> &BufferStatus {
         &self.current_state

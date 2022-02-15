@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use ramulator_wrapper::RamulatorWrapper;
 
-use super::{component::Component, req::WindowId};
+use super::{component::Component, window_id::WindowId};
 
 #[derive(Debug)]
 pub struct MemWindowIdust {
@@ -50,7 +50,7 @@ impl Component for MemInterface {
     /// when the recv queue is not full and self.mem is ret_available, receive the first response from memory,
     /// note that: need to delete the request from current_waiting_request and current_waiting_mem_request
     ///
-    fn cycle(&mut self) {
+    fn cycle(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if self.send_queue.len() > 0 {
             let req = self.send_queue.front_mut().unwrap();
             while let Some(addr) = req.addr_vec.pop() {
@@ -87,6 +87,7 @@ impl Component for MemInterface {
             }
         }
         self.mem.cycle();
+        Ok(())
     }
 }
 
@@ -122,7 +123,6 @@ impl MemInterface {
     /// * receive a response from memory and keep the request ***still in mem(not pop it)***
     #[allow(dead_code)]
     pub fn receive(&self) -> WindowId {
-        todo!("should be here");
         let req = self.recv_queue.front().unwrap();
         req.clone()
     }
@@ -138,11 +138,11 @@ impl MemInterface {
 #[cfg(test)]
 mod tests {
 
-    use crate::accelerator::req::WindowId;
+    use crate::accelerator::window_id::WindowId;
     use super::*;
 
     #[test]
-    fn test_mem_interface() {
+    fn test_mem_interface() -> Result<(), Box<dyn std::error::Error>> {
         let mut mem_interface = super::MemInterface::new(1, 1);
         assert_eq!(mem_interface.available(), true);
         assert_eq!(mem_interface.ret_ready(), false);
@@ -151,7 +151,7 @@ mod tests {
         assert_eq!(mem_interface.ret_ready(), false);
 
         while !mem_interface.ret_ready() {
-            mem_interface.cycle();
+            mem_interface.cycle()?;
         }
 
         assert_eq!(mem_interface.available(), true);
@@ -161,5 +161,6 @@ mod tests {
         assert_eq!(result, WindowId::new(1, 1, 1));
         assert_eq!(mem_interface.current_waiting_mem_request.is_empty(), true);
         assert_eq!(mem_interface.current_waiting_request.is_empty(), true);
+        Ok(())
     }
 }

@@ -5,7 +5,10 @@ use std::{
 
 use crate::node_features::NodeFeatures;
 
-use super::{agg_buffer::AggBuffer, component::Component, req::WindowId, sliding_window::Window};
+use super::{
+    component::Component, sliding_window::InputWindow, temp_agg_result::TempAggResult,
+    window_id::WindowId,
+};
 #[derive(Debug, PartialEq)]
 pub enum AggregatorState {
     Idle,
@@ -22,12 +25,10 @@ pub struct Aggregator {
     dense_width: usize,
 
     pub state: AggregatorState,
-    current_col_temp_result: Vec<Vec<usize>>,
     last_col_id: usize,
     current_task_id: Option<WindowId>,
     current_task_remaining_cycles: u64,
 }
-
 
 impl Component for Aggregator {
     /// # Description
@@ -37,7 +38,7 @@ impl Component for Aggregator {
     /// aggregator.cycle();
     /// ```
     ///
-    fn cycle(&mut self) {
+    fn cycle(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         match self.state {
             AggregatorState::Working => {
                 if self.current_task_remaining_cycles == 0 {
@@ -48,6 +49,7 @@ impl Component for Aggregator {
             }
             _ => {}
         }
+        Ok(())
     }
 }
 
@@ -57,11 +59,8 @@ impl Aggregator {
         sparse_width: usize,
         dense_cores: usize,
         dense_width: usize,
-        total_nodes: usize,
     ) -> Aggregator {
-        let mut current_col_temp_result = vec![vec![]; total_nodes];
         Aggregator {
-            current_col_temp_result,
             sparse_cores,
             sparse_width,
             dense_cores,
@@ -73,22 +72,33 @@ impl Aggregator {
         }
     }
 
-    pub fn add_task(&mut self, task: &Window, node_features: &NodeFeatures) {
-        let col_id = task.get_task_id().col_id;
-        if col_id != self.last_col_id {
-            self.last_col_id = col_id;
-            self.current_col_temp_result
-                .iter_mut()
-                .for_each(|v| v.clear());
-        }
-        let tasks = task.get_tasks().clone();
-        // collect tasks to Vec<Vec<usize>>
-        let output_node_ids = task.get_output_node_ids();
-        let cycles = self.get_add_sparse_cycle(tasks, output_node_ids, node_features);
+    pub fn add_task(
+        &mut self,
+        task: &InputWindow,
+        node_features: &NodeFeatures,
+        temp_agg_result: &mut Option<TempAggResult>,
+    ) {
+        match temp_agg_result {
+            Some(temp_agg_result) => {
+                let tasks = task.get_tasks().clone();
+                // collect tasks to Vec<Vec<usize>>
+                let output_start = task.start_x;
+                let output_end = task.end_x;
 
-        self.state = AggregatorState::Working;
-        self.current_task_id = Some(task.get_task_id().clone());
-        self.current_task_remaining_cycles = cycles;
+                let cycles = self.get_add_sparse_cycle(
+                    tasks,
+                    &mut temp_agg_result[output_start..output_end],
+                    node_features,
+                );
+
+                self.state = AggregatorState::Working;
+                self.current_task_id = Some(task.get_task_id().clone());
+                self.current_task_remaining_cycles = cycles;
+            }
+            None => {
+                todo!();
+            }
+        }
     }
     pub fn get_state(&self) -> &AggregatorState {
         &self.state
@@ -132,13 +142,13 @@ impl Aggregator {
     pub fn get_add_sparse_cycle(
         &mut self,
         tasks: Vec<Range<usize>>,
-        output_node_ids: &Vec<usize>,
+        output_features: &mut [Vec<usize>],
         node_features: &NodeFeatures,
     ) -> u64 {
         // each task's cycles
         let mut cycle_vec = Vec::new();
-        for (task, &output_id) in tasks.into_iter().zip(output_node_ids.iter()) {
-            cycle_vec.push(self.get_add_cycle_and_result_sparse(output_id, task, node_features));
+        for (task, output_vec) in tasks.into_iter().zip(output_features.iter_mut()) {
+            cycle_vec.push(self.get_add_cycle_and_result_sparse(output_vec, task, node_features));
         }
 
         // each cores current cycles, always push task to the core with the least cycles
@@ -185,14 +195,13 @@ impl Aggregator {
     ///
     fn get_add_cycle_and_result_sparse(
         &mut self,
-        output_id: usize,
+        output_feature: &mut Vec<usize>,
         input_nodes: Range<usize>,
         node_features: &NodeFeatures,
     ) -> u64 {
         let mut cycles = 0;
-        let output_node_feature = &mut self.current_col_temp_result[output_id];
         // type 1, simplely add the features one by one
-        let mut temp_set: HashSet<usize> = output_node_feature.iter().cloned().collect();
+        let mut temp_set: HashSet<usize> = output_feature.iter().cloned().collect();
 
         for &i in input_nodes {
             cycles += temp_set.len() + node_features.get_features(i).len();
@@ -200,8 +209,8 @@ impl Aggregator {
                 temp_set.insert(j);
             }
         }
-        output_node_feature.clear();
-        output_node_feature.append(&mut temp_set.into_iter().collect());
+        output_feature.clear();
+        output_feature.append(&mut temp_set.into_iter().collect());
         cycles as u64
     }
 

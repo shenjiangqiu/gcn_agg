@@ -1,6 +1,6 @@
-use std::mem::swap;
+use std::{mem::swap, rc::Rc};
 
-use super::{component::Component, sliding_window::Window};
+use super::{component::Component, sliding_window::OutputWindow};
 #[derive(Debug, PartialEq)]
 pub enum BufferStatus {
     Empty,
@@ -8,14 +8,14 @@ pub enum BufferStatus {
     WaitingToWriteBack,
 }
 #[derive(Debug)]
-pub struct OutputBuffer<'a> {
+pub struct OutputBuffer {
     pub current_state: BufferStatus,
     pub next_state: BufferStatus,
-    pub current_window: Option<Window<'a>>,
-    pub next_window: Option<Window<'a>>,
+    pub current_window: Option<Rc<OutputWindow>>,
+    pub next_window: Option<Rc<OutputWindow>>,
 }
 
-impl Component for OutputBuffer<'_> {
+impl Component for OutputBuffer {
     /// # Description
     /// simply swap the current and next state when current state is Empty
     ///
@@ -39,17 +39,18 @@ impl Component for OutputBuffer<'_> {
     ///
     /// ```
     ///
-    fn cycle(&mut self) {
+    fn cycle(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         match (&self.current_state, &self.next_state) {
             (BufferStatus::WaitingToWriteBack, BufferStatus::Empty) => {
                 swap(&mut self.current_state, &mut self.next_state);
             }
             _ => {}
         }
+        Ok(())
     }
 }
 
-impl<'a> OutputBuffer<'a> {
+impl OutputBuffer {
     pub fn new() -> Self {
         OutputBuffer {
             current_state: BufferStatus::Empty,
@@ -59,15 +60,15 @@ impl<'a> OutputBuffer<'a> {
         }
     }
 
-    pub fn start_writing(&mut self, id_: usize) {
+    pub fn start_mlp(&mut self) {
         assert_eq!(self.current_state, BufferStatus::Empty);
         self.current_state = BufferStatus::Writing;
     }
-    pub fn finished_writing(&mut self, id_: usize) {
+    pub fn finished_writing(&mut self) {
         assert_eq!(self.current_state, BufferStatus::Writing);
         self.current_state = BufferStatus::WaitingToWriteBack;
     }
-    pub fn start_writing_back(&mut self, id_: usize) {
+    pub fn start_writing_back(&mut self) {
         assert_eq!(self.next_state, BufferStatus::WaitingToWriteBack);
         self.next_state = BufferStatus::Empty;
     }

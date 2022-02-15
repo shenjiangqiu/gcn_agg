@@ -1,4 +1,4 @@
-use super::{component::Component, sliding_window::Window};
+use super::{component::Component, sliding_window::OutputWindow, temp_agg_result::TempAggResult};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MlpState {
@@ -17,7 +17,7 @@ pub struct Mlp {
 }
 
 impl Component for Mlp {
-    fn cycle(&mut self) {
+    fn cycle(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         match self.state {
             MlpState::Working => {
                 if self.remaining_cycle == 0 {
@@ -28,6 +28,7 @@ impl Component for Mlp {
             }
             _ => {}
         }
+        Ok(())
     }
 }
 
@@ -60,18 +61,22 @@ impl Mlp {
     /// # Return
     /// ()
     ///
-    pub fn start_mlp(&mut self, tasks: &Window, output_results: &Option<Vec<Vec<usize>>>) {
+    pub fn start_mlp(
+        &mut self,
+        output_window: &OutputWindow,
+        output_results: &Option<TempAggResult>,
+    ) {
         match output_results {
-            Some(output_results) => {
+            Some(_output_results) => {
                 todo!();
             }
             None => {
                 self.state = MlpState::Working;
                 let mut total_cycles = 0;
                 // calculate the number of cycles needed to finish the mlp
-                let num_nodes = tasks.get_output_node_ids().len();
-                let output_node_dim = tasks.output_node_dim;
-                let input_node_dim = tasks.input_node_dim;
+                let num_nodes = output_window.get_output_len();
+                let output_node_dim = output_window.output_node_dim;
+                let input_node_dim = output_window.input_node_dim;
                 let steps = (self.systolic_rows + num_nodes - 1) / self.systolic_rows;
                 let elements_steps =
                     (output_node_dim + self.systolic_cols - 1) / self.systolic_cols;

@@ -1,15 +1,16 @@
 use super::component::Component;
-use super::mlp::{Mlp, self};
+use super::mlp::{self, Mlp};
 use super::output_buffer;
+use super::sparsifier::Sparsifier;
 use super::{
     agg_buffer::{self, AggBuffer},
     aggregator::{self, Aggregator},
     input_buffer::{self, InputBuffer},
     mem_interface::MemInterface,
     output_buffer::OutputBuffer,
-    sliding_window::{InputWindowIterator, OutputWindowIterator, Window},
+    sliding_window::{InputWindow, InputWindowIterator, OutputWindowIterator},
 };
-use log::{debug, info, trace};
+use log::debug;
 /// # Description
 /// the state for the system
 /// * `Idle` means this is the very first of each layer, need to init the new output and input iter
@@ -19,7 +20,6 @@ use log::{debug, info, trace};
 /// * `Finished` means all layer is finished
 #[derive(Debug, PartialEq)]
 enum SystemState {
-    Empty,
     Working,
     Finished,
 }
@@ -33,13 +33,14 @@ pub struct System<'a> {
     total_cycle: u64,
     aggregator: Aggregator,
     input_buffer: InputBuffer<'a>,
-    output_buffer: OutputBuffer<'a>,
-    agg_buffer: AggBuffer<'a>,
+    output_buffer: OutputBuffer,
+    agg_buffer: AggBuffer,
     mem_interface: MemInterface,
-    mlp:Mlp,
+    sparsifier: Sparsifier,
+    mlp: Mlp,
 
     graph: &'a Graph,
-    node_features: Vec<&'a NodeFeatures>,
+    node_features: &'a Vec<NodeFeatures>,
 
     input_buffer_size: usize,
     agg_buffer_size: usize,
@@ -47,7 +48,7 @@ pub struct System<'a> {
     current_layer: usize,
     current_output_iter: OutputWindowIterator<'a>,
     current_input_iter: InputWindowIterator<'a>,
-    current_window: Option<Window<'a>>,
+    current_window: Option<InputWindow<'a>>,
     gcn_layer_num: usize,
     gcn_hidden_size: &'a Vec<usize>,
 }
@@ -58,25 +59,24 @@ impl Component for System<'_> {
     /// * will update each component's status
     /// * will ***NOT*** update the cycle
     ///
-    fn cycle(&mut self) {
+    fn cycle(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         match &self.state {
             SystemState::Working => {
-                self.aggregator.cycle();
-                self.mem_interface.cycle();
-                self.agg_buffer.cycle();
-                self.input_buffer.cycle();
-                self.output_buffer.cycle();
+                self.aggregator.cycle()?;
+                self.mem_interface.cycle()?;
+                self.agg_buffer.cycle()?;
+                self.input_buffer.cycle()?;
+                self.output_buffer.cycle()?;
                 // add task to current input_buffer or send request to memory
                 match self.input_buffer.get_current_state() {
                     input_buffer::BufferStatus::Empty => {
                         // add a task to the input buffer
                         // self.input_buffer.send_req(self.current_input_iter.as_ref().unwrap());
                         let window = self.current_window.take().unwrap();
-                        let req_id = window.get_task_id();
 
                         self.input_buffer.add_task_to_current(window);
                         self.move_to_next_window();
-                        return;
+                        return Ok(());
                     }
                     // need to send request to memory
                     input_buffer::BufferStatus::WaitingToLoad => {
@@ -105,7 +105,7 @@ impl Component for System<'_> {
                             self.mem_interface
                                 .send(window.get_task_id().clone(), addr_vec, false);
                             self.input_buffer.send_req(true);
-                            return;
+                            return Ok(());
                         }
                     }
                     _ => {
@@ -118,10 +118,9 @@ impl Component for System<'_> {
                         // add a task to the input buffer
                         // self.input_buffer.send_req(self.current_input_iter.as_ref().unwrap());
                         let window = self.current_window.take().unwrap();
-                        let req_id = window.get_task_id();
                         self.input_buffer.add_task_to_current(window);
                         self.move_to_next_window();
-                        return;
+                        return Ok(());
                     }
                     input_buffer::BufferStatus::WaitingToLoad => {
                         if self.mem_interface.available() {
@@ -149,7 +148,7 @@ impl Component for System<'_> {
                             self.mem_interface
                                 .send(window.get_task_id().clone(), addr_vec, false);
                             self.input_buffer.send_req(false);
-                            return;
+                            return Ok(());
                         }
                     }
                     _ => {
@@ -161,7 +160,7 @@ impl Component for System<'_> {
                 if self.mem_interface.ret_ready() {
                     let ret_req = self.mem_interface.receive_pop();
                     self.input_buffer.receive(&ret_req);
-                    return;
+                    return Ok(());
                 }
 
                 // test if the aggregator is ready to start
@@ -183,21 +182,16 @@ impl Component for System<'_> {
                         let current_window = self.input_buffer.get_current_window().unwrap();
                         let window_layer = current_window.get_task_id().layer_id;
 
-                        match self.agg_buffer.add_task(current_window) {
-                            Ok(_) => {
-                                // start the aggregator
-                                self.aggregator.add_task(
-                                    current_window,
-                                    self.node_features.get(window_layer).unwrap(),
-                                );
-                                self.input_buffer.current_state =
-                                    input_buffer::BufferStatus::Reading;
-                                return;
-                            }
-                            Err(_) => {
-                                // the aggbuffer need some time to finish current task
-                            }
-                        }
+                        // start the aggregator
+                        self.agg_buffer
+                            .add_task(current_window.get_output_window().clone());
+                        self.aggregator.add_task(
+                            current_window,
+                            self.node_features.get(window_layer).unwrap(),
+                            &mut self.agg_buffer.current_temp_result,
+                        );
+                        self.input_buffer.current_state = input_buffer::BufferStatus::Reading;
+                        return Ok(());
                     }
                     _ => {}
                 }
@@ -209,28 +203,29 @@ impl Component for System<'_> {
                         self.aggregator.state = aggregator::AggregatorState::Idle;
                         // 2. set the input buffer to empty
                         self.input_buffer.current_state = input_buffer::BufferStatus::Empty;
-                        return;
+                        return Ok(());
                     }
                     _ => {}
                 }
                 // test if start the mlp
-                match (self.agg_buffer.get_next_state(), self.mlp.state,self.output_buffer.current_state){
+                match (
+                    self.agg_buffer.get_next_state(),
+                    &self.mlp.state,
+                    &self.output_buffer.current_state,
+                ) {
                     (
                         agg_buffer::BufferStatus::WaitingToMlp,
                         mlp::MlpState::Idle,
                         output_buffer::BufferStatus::Empty,
                     ) => {
                         // start the mlp
-                        let current_window = self.agg_buffer.get_current_window().unwrap();
-                        let window_layer = current_window.get_task_id().layer_id;
-                        self.mlp.add_task(
-                            current_window,
-                            self.node_features.get(window_layer).unwrap(),
-                        );
-                        self.agg_buffer.current_state = agg_buffer::BufferStatus::Mlp;
-                        self.mlp.start_mlp(current_window, output_results)
-                        
-                        return;
+                        let current_window = self.agg_buffer.get_current_window();
+                        self.mlp
+                            .start_mlp(current_window, &self.agg_buffer.next_temp_result);
+                        self.agg_buffer.start_mlp();
+                        self.output_buffer.start_mlp();
+
+                        return Ok(());
                     }
                     _ => {}
                 }
@@ -239,17 +234,17 @@ impl Component for System<'_> {
             SystemState::Finished => {
                 self.finished = true;
             }
-            _ => {}
         }
+        Ok(())
     }
 }
 
 impl<'a> System<'a> {
     pub fn new(
         graph: &'a Graph,
-        node_features: Vec<&'a NodeFeatures>,
+        node_features: &'a Vec<NodeFeatures>,
         sparse_cores: usize,
-        spase_width: usize,
+        sparse_width: usize,
         dense_cores: usize,
         dense_width: usize,
         input_buffer_size: usize,
@@ -260,20 +255,15 @@ impl<'a> System<'a> {
         systolic_rows: usize,
         systolic_cols: usize,
         mlp_sparse_cores: usize,
+        sparsifier_cores: usize,
     ) -> System<'a> {
-        let aggregator = Aggregator::new(
-            sparse_cores,
-            spase_width,
-            dense_cores,
-            dense_width,
-            graph.total_nodes,
-        );
+        let aggregator = Aggregator::new(sparse_cores, sparse_width, dense_cores, dense_width);
 
         let input_buffer = InputBuffer::new();
         let output_buffer = OutputBuffer::new();
-        let agg_buffer = AggBuffer::new();
+        let agg_buffer = AggBuffer::new(graph.get_num_node());
         let mem_interface = MemInterface::new(64, 64);
-        let mlp=Mlp::new(systolic_rows,systolic_cols,mlp_sparse_cores);
+        let mlp = Mlp::new(systolic_rows, systolic_cols, mlp_sparse_cores);
 
         let mut current_output_iter = OutputWindowIterator::new(
             graph,
@@ -314,6 +304,7 @@ impl<'a> System<'a> {
             gcn_layer_num,
             gcn_hidden_size,
             mlp,
+            sparsifier: Sparsifier::new(sparsifier_cores),
         }
     }
     /// # Description
@@ -365,12 +356,13 @@ impl<'a> System<'a> {
     /// keep running until all finished
     /// * for each cycle, it will call the cycle function
     /// * and increase the total_cycle
-    pub fn run(&mut self) {
+    pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         while !self.finished {
-            self.cycle();
+            self.cycle()?;
             self.total_cycle += 1;
         }
         self.print_stats();
+        Ok(())
     }
 
     pub fn finished(&self) -> bool {
@@ -387,7 +379,7 @@ mod test {
     use super::*;
     use std::{fs::File, io::Write};
     #[test]
-    fn test_system() {
+    fn test_system() -> Result<(), Box<dyn std::error::Error>> {
         let graph_name = "test_data/graph.txt";
         let features_name = "test_data/features.txt";
         let data = "f 3\n0 1 2\n1 2 0\n2 0 1\nend\n";
@@ -398,11 +390,11 @@ mod test {
         file.write_all(data.as_bytes()).unwrap();
         let graph = Graph::from(graph_name);
         let node_features = NodeFeatures::from(features_name);
-        let node_features = vec![&node_features];
-        let mut gcn_hidden_size = vec![2, 2];
+        let node_features = vec![node_features];
+        let gcn_hidden_size = vec![2, 2];
         let mut system = System::new(
             &graph,
-            node_features,
+            &node_features,
             1,
             1,
             1,
@@ -412,9 +404,14 @@ mod test {
             100,
             1,
             &gcn_hidden_size,
+            1,
+            1,
+            1,
+            1,
         );
-        system.run();
+        system.run()?;
         assert_eq!(system.finished(), true);
+        Ok(())
     }
     #[test]
     fn window_iter_test() {
@@ -427,8 +424,8 @@ mod test {
         let mut file = File::create("test_data/features.txt").unwrap();
         file.write_all(data.as_bytes()).unwrap();
 
-        let mut graph = Graph::from(graph_name);
-        let mut node_features = NodeFeatures::from(features_name);
+        let _graph = Graph::from(graph_name);
+        let _node_features = NodeFeatures::from(features_name);
         // let mut window_iter = WindowIterator::new(&graph, &node_features, 1, 1, 1);
         // for i in window_iter {
         //     println!("{:?}", i);

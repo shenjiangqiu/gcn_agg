@@ -103,7 +103,7 @@ impl NodeFeatures {
 mod test {
     use super::*;
     use std::fs::File;
-    use std::io::{Read, Write};
+    use std::io::Write;
 
     #[test]
     fn test_node_features() {

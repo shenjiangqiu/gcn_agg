@@ -12,3 +12,8 @@ lazy_static = "1.4"
 log = "0.4"
 ramulator_wrapper = {path = "../ramulator_wrapper"}
 
+config = "*"
+serde= {version = "1.0", features = ["derive"]}
+
+[dev-dependencies]
+serde_json = "1.0"
