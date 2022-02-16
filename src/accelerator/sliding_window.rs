@@ -4,42 +4,49 @@ use std::{cmp::min, collections::btree_set::Range, rc::Rc};
 
 #[derive(Debug, Clone)]
 pub struct InputWindow<'a> {
-    pub task_id: Rc<WindowId>,
+    pub task_id: WindowId,
     tasks: Rc<Vec<Range<'a, usize>>>,
-    pub start_x: usize,
-    pub start_y: usize,
-    pub end_x: usize,
-    pub end_y: usize,
+    pub start_output_index: usize,
+    pub start_input_index: usize,
+    pub end_output_index: usize,
+    pub end_input_index: usize,
     pub output_window: Rc<OutputWindow>,
+    pub is_last_row: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct OutputWindow {
-    pub start_x: usize,
-    pub end_x: usize,
-    pub task_id: Rc<WindowId>,
+    pub start_output_index: usize,
+    pub end_output_index: usize,
+    pub task_id: WindowId,
     pub output_node_dim: usize,
     pub input_node_dim: usize,
+    pub final_window: bool,
+    pub final_layer: bool,
 }
 
 impl OutputWindow {
     pub fn new(
-        start_x: usize,
-        end_x: usize,
-        task_id: Rc<WindowId>,
+        start_output_index: usize,
+        end_output_index: usize,
+        task_id: WindowId,
         output_node_dim: usize,
         input_node_dim: usize,
+        final_window: bool,
+        final_layer: bool,
     ) -> Self {
         OutputWindow {
-            start_x,
-            end_x,
+            start_output_index,
+            end_output_index,
             task_id,
             output_node_dim,
             input_node_dim,
+            final_window,
+            final_layer,
         }
     }
     pub fn get_output_len(&self) -> usize {
-        self.end_x - self.start_x
+        self.end_output_index - self.start_output_index
     }
     pub fn get_output_dim(&self) -> usize {
         self.output_node_dim
@@ -47,29 +54,31 @@ impl OutputWindow {
     pub fn get_input_dim(&self) -> usize {
         self.input_node_dim
     }
-    pub fn get_task_id(&self) -> &Rc<WindowId> {
+    pub fn get_task_id(&self) -> &WindowId {
         &self.task_id
     }
 }
 
 impl<'a> InputWindow<'a> {
     pub fn new(
-        task_id: Rc<WindowId>,
+        task_id: WindowId,
         tasks: Rc<Vec<Range<'a, usize>>>,
-        start_x: usize,
-        start_y: usize,
-        end_x: usize,
-        end_y: usize,
+        start_output_index: usize,
+        start_input_index: usize,
+        end_output_index: usize,
+        end_input_index: usize,
         output_window: Rc<OutputWindow>,
+        is_last_row: bool,
     ) -> InputWindow<'a> {
         InputWindow {
             task_id,
             tasks,
-            start_x,
-            start_y,
-            end_x,
-            end_y,
+            start_output_index,
+            start_input_index,
+            end_output_index,
+            end_input_index,
             output_window,
+            is_last_row,
         }
     }
     pub fn get_task_id(&self) -> &WindowId {
@@ -79,10 +88,10 @@ impl<'a> InputWindow<'a> {
         &self.tasks
     }
     pub fn get_location_x(&self) -> (usize, usize) {
-        (self.start_x, self.end_x)
+        (self.start_output_index, self.end_output_index)
     }
     pub fn get_location_y(&self) -> (usize, usize) {
-        (self.start_y, self.end_y)
+        (self.start_input_index, self.end_input_index)
     }
     pub fn get_output_window(&self) -> &Rc<OutputWindow> {
         &self.output_window
@@ -95,9 +104,10 @@ pub struct OutputWindowIterator<'a> {
     node_features: &'a NodeFeatures,
     agg_buffer_size: usize,
     input_buffer_size: usize,
-    current_start_y: usize,
+    current_start_output_index: usize,
     task_id: WindowId,
     gcn_hidden_size: &'a Vec<usize>,
+    pub final_layer: bool,
 }
 impl<'a> OutputWindowIterator<'a> {
     pub fn new(
@@ -107,19 +117,21 @@ impl<'a> OutputWindowIterator<'a> {
         input_buffer_size: usize,
         layer: usize,
         gcn_hidden_size: &'a Vec<usize>,
+        final_layer: bool,
     ) -> OutputWindowIterator<'a> {
         OutputWindowIterator {
             graph,
             node_features,
             agg_buffer_size,
             input_buffer_size,
-            current_start_y: 0,
+            current_start_output_index: 0,
             task_id: WindowId {
                 layer_id: layer,
                 col_id: 0,
                 row_id: 0,
             },
             gcn_hidden_size,
+            final_layer,
         }
     }
 }
@@ -127,22 +139,35 @@ impl<'a> Iterator for OutputWindowIterator<'a> {
     type Item = InputWindowIterator<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current_start_y >= self.graph.get_num_node() {
+        if self.current_start_output_index >= self.graph.get_num_node() {
             return None;
         }
-        let y_size = self.agg_buffer_size / (self.graph.get_feature_size() * 4);
-        let end_y = min(self.current_start_y + y_size, self.graph.get_num_node());
+        let output_size = self.agg_buffer_size / (self.graph.get_feature_size() * 4);
+        let end_output_index = min(
+            self.current_start_output_index + output_size,
+            self.graph.get_num_node(),
+        );
+        let final_iter = {
+            if self.final_layer && end_output_index >= self.graph.get_num_node() {
+                true
+            } else {
+                false
+            }
+        };
+
         let intput_iter = InputWindowIterator::new(
             self.task_id.clone(),
             self.graph,
             self.node_features,
             self.input_buffer_size,
-            self.current_start_y,
-            end_y,
+            self.current_start_output_index,
+            end_output_index,
             self.gcn_hidden_size,
+            final_iter,
+            self.final_layer,
         );
         self.task_id.col_id += 1;
-        self.current_start_y = end_y;
+        self.current_start_output_index = end_output_index;
         Some(intput_iter)
     }
 }
@@ -153,12 +178,14 @@ pub struct InputWindowIterator<'a> {
     graph: &'a Graph,
     node_features: &'a NodeFeatures,
     input_buffer_size: usize,
-    start_y: usize,
-    end_y: usize,
+    start_output_index: usize,
+    end_output_index: usize,
     // current window information
-    current_window_start_x: usize,
-    current_window_end_x: usize,
+    current_window_start_input_index: usize,
+    current_window_end_input_index: usize,
     gcn_hidden_size: &'a Vec<usize>,
+    final_iter: bool,
+    final_layer: bool,
 }
 // impl new for InputWindowIterator
 impl<'a> InputWindowIterator<'a> {
@@ -167,20 +194,24 @@ impl<'a> InputWindowIterator<'a> {
         graph: &'a Graph,
         node_features: &'a NodeFeatures,
         input_buffer_size: usize,
-        start_y: usize,
-        end_y: usize,
+        start_output_index: usize,
+        end_output_index: usize,
         gcn_hidden_size: &'a Vec<usize>,
+        final_iter: bool,
+        final_layer: bool,
     ) -> Self {
         InputWindowIterator {
             task_id,
             graph,
             node_features,
             input_buffer_size,
-            start_y,
-            end_y,
-            current_window_end_x: 0,
-            current_window_start_x: 0,
+            start_output_index,
+            end_output_index,
+            current_window_end_input_index: 0,
+            current_window_start_input_index: 0,
             gcn_hidden_size,
+            final_iter,
+            final_layer,
         }
     }
 }
@@ -189,33 +220,37 @@ impl<'a> Iterator for InputWindowIterator<'a> {
     type Item = InputWindow<'a>;
     fn next(&mut self) -> Option<Self::Item> {
         // test if no window left
-        if self.current_window_start_x >= self.graph.get_num_node() {
+        if self.current_window_start_input_index >= self.graph.get_num_node() {
             return None;
         } else {
             // first skip all emtpy rows
-            while self.current_window_start_x < self.graph.get_num_node() {
+            while self.current_window_start_input_index < self.graph.get_num_node() {
                 if self
                     .graph
-                    .is_row_range_empty(self.current_window_start_x, self.start_y, self.end_y)
+                    .is_row_range_empty(
+                        self.current_window_start_input_index,
+                        self.start_output_index,
+                        self.end_output_index,
+                    )
                     .expect("is_row_range_empty should always return Some")
                 {
-                    self.current_window_start_x += 1;
+                    self.current_window_start_input_index += 1;
                 } else {
                     break;
                 }
             }
-            if self.current_window_start_x == self.graph.get_num_node() {
+            if self.current_window_start_input_index == self.graph.get_num_node() {
                 return None;
             }
             // build the window
             let mut x_size = 0;
             let mut x_len = 1;
             while x_size < self.input_buffer_size
-                && self.current_window_start_x + x_len < self.graph.get_num_node()
+                && self.current_window_start_input_index + x_len < self.graph.get_num_node()
             {
                 let new_size = self
                     .node_features
-                    .get_features(self.current_window_start_x + x_len - 1)
+                    .get_features(self.current_window_start_input_index + x_len - 1)
                     .len()
                     * 4;
                 if x_size + new_size >= self.input_buffer_size {
@@ -225,53 +260,90 @@ impl<'a> Iterator for InputWindowIterator<'a> {
                 x_len += 1;
             }
             // shrink the window
-            self.current_window_end_x = self.current_window_start_x + x_len;
+            self.current_window_end_input_index = self.current_window_start_input_index + x_len;
+
             while self
                 .graph
-                .is_row_range_empty(self.current_window_end_x - 1, self.start_y, self.end_y)
+                .is_row_range_empty(
+                    self.current_window_end_input_index - 1,
+                    self.start_output_index,
+                    self.end_output_index,
+                )
                 .expect("is_row_range_empty should always return Some")
             {
-                self.current_window_end_x -= 1;
+                self.current_window_end_input_index -= 1;
             }
 
             // build the current window
             let csc = self.graph.get_csc();
             let mut tasks = Vec::new();
             let mut output_node_ids = Vec::new();
-            for i in self.start_y..self.end_y {
-                let task = csc
-                    .get(i)
-                    .unwrap()
-                    .range(self.current_window_start_x..self.current_window_end_x);
+            for i in self.start_output_index..self.end_output_index {
+                let task = csc.get(i).unwrap().range(
+                    self.current_window_start_input_index..self.current_window_end_input_index,
+                );
 
                 tasks.push(task);
                 output_node_ids.push(i);
             }
-            let task_id = Rc::new(WindowId::new(
-                self.task_id.col_id,
-                self.task_id.row_id,
-                self.task_id.layer_id,
-            ));
+            let task_id = self.task_id.clone();
+
             let tasks = Rc::new(tasks);
+            let final_window = self.final_iter;
+
+            let input_node_dim = match task_id.layer_id {
+                0 => self.graph.get_feature_size(),
+                _ => *self.gcn_hidden_size.get(task_id.layer_id - 1).unwrap(),
+            };
+
+            let output_node_dim = match self.final_layer {
+                true => 1,
+                false => *self.gcn_hidden_size.get(self.end_output_index).unwrap(),
+            };
+            let mut next_start_row = self.current_window_start_input_index + x_len;
+            // test if it't the last row: all the rows after end_input_index should be empty
+            let mut is_last_row = true;
+
+            while next_start_row < self.graph.get_num_node() {
+                if !self
+                    .graph
+                    .is_row_range_empty(
+                        next_start_row,
+                        self.start_output_index,
+                        self.end_output_index,
+                    )
+                    .expect("is_row_range_empty should always return Some")
+                {
+                    is_last_row = false;
+                    break;
+                }
+                next_start_row += 1;
+            }
+
+            //let is_last_row= self.current_window_end_input_index == self.graph.get_num_node();
+
             let current_window = InputWindow {
                 task_id: task_id.clone(),
                 tasks,
-                start_x: self.current_window_start_x,
-                start_y: self.start_y,
-                end_x: self.current_window_end_x,
-                end_y: self.end_y,
+                start_output_index: self.start_output_index,
+                start_input_index: self.current_window_start_input_index,
+                end_output_index: self.end_output_index,
+                end_input_index: self.current_window_end_input_index,
 
                 output_window: Rc::new(OutputWindow::new(
-                    self.current_window_start_x,
-                    self.start_y,
+                    self.start_output_index,
+                    self.end_output_index,
                     task_id.clone(),
-                    *self.gcn_hidden_size.get(self.task_id.layer_id + 1).unwrap(),
-                    *self.gcn_hidden_size.get(self.task_id.layer_id).unwrap(),
+                    output_node_dim,
+                    input_node_dim,
+                    final_window,
+                    self.final_layer,
                 )),
+                is_last_row,
             };
 
             // prepare the next start x and start y
-            self.current_window_start_x = self.current_window_end_x;
+            self.current_window_start_input_index = next_start_row;
 
             self.task_id.row_id += 1;
             return Some(current_window);
@@ -299,7 +371,7 @@ mod test {
         let node_features = NodeFeatures::new(features_name).unwrap();
         let gcn_hidden_size = vec![2, 2];
         let output_window_iter =
-            OutputWindowIterator::new(&graph, &node_features, 20, 20, 0, &gcn_hidden_size);
+            OutputWindowIterator::new(&graph, &node_features, 20, 20, 0, &gcn_hidden_size, false);
         for i in output_window_iter {
             println!("{:?}", i);
             for j in i {

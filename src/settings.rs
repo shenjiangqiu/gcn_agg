@@ -51,7 +51,14 @@ impl Settings {
             s.merge(File::with_name(&i))?;
         }
 
-        s.try_into()
+        let result: Self = s.try_into()?;
+        if result.features_paths.len() == result.accelerator_settings.gcn_hidden_size.len() + 1 {
+            Ok(result)
+        } else {
+            Err(ConfigError::Message(String::from(
+                "Number of features files does not match the number of hidden layers, feature path should be one more than the number of hidden layers(including the input layer)",
+            )))
+        }
     }
 }
 

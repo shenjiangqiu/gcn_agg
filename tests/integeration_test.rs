@@ -1,38 +1,24 @@
+mod common;
 use chrono::Local;
-use gcn_agg::accelerator::system::System;
-use gcn_agg::gcn_result::GcnAggResult;
-use gcn_agg::settings::{
-    AcceleratorSettings, AggregatorSettings, MlpSettings, Settings, SparsifierSettings,
+use gcn_agg::{
+    accelerator::system::System,
+    gcn_result::GcnAggResult,
+    graph::Graph,
+    node_features::NodeFeatures,
+    settings::{
+        AcceleratorSettings, AggregatorSettings, MlpSettings, Settings, SparsifierSettings,
+    },
 };
-use gcn_agg::{graph::Graph, node_features::NodeFeatures};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    simple_logger::init_with_level(log::Level::Warn)?;
+#[test]
+fn test_system() -> Result<(), Box<dyn std::error::Error>> {
+    simple_logger::init_with_level(log::Level::Debug)?;
+    
     let start_time = std::time::Instant::now();
-
-    let mut config_names = vec![String::from("configs/default.toml")];
-    let margs: Vec<String> = std::env::args().collect();
-    if let Some(first_arg) = margs.get(1) {
-        if first_arg == "--help" || first_arg == "-h" {
-            println!("Usage: gcn_agg [config_file ...]");
-            println!("If no config file is specified, the default config file is used.");
-            println!("The default config file is configs/default.toml");
-            println!("all the config files in configs/user_configs/ are also automaticly loaded.");
-            println!("for example: gcn_agg configs/optional_configs/my_config.toml");
-            println!("will load configs/default.toml and configs/optional_configs/my_config.toml and all the config files in configs/user_configs/");
-            return Ok(());
-        }
-    }
-
-    // config_names append args
-    for arg in margs {
-        config_names.push(arg);
-    }
-
     let mut results = GcnAggResult::new();
-    let settings = Settings::new(config_names)?;
+
+    let settings = Settings::new(vec!["configs/default.toml".into()]).unwrap();
     results.settings = Some(settings.clone());
-    println!("{}", serde_json::to_string_pretty(&settings)?);
     // create the folder for output
     std::fs::create_dir_all("output")?;
 
@@ -81,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         input_buffer_size,
         agg_buffer_size,
         output_buffer_size,
-        node_features.len(),
+        gcn_hidden_size.len(),
         &gcn_hidden_size,
         systolic_rows,
         systolic_cols,

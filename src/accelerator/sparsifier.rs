@@ -2,6 +2,8 @@
 //!
 //!
 
+use crate::node_features::NodeFeatures;
+
 use super::component::Component;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -54,7 +56,7 @@ impl Sparsifier {
         &mut self,
         _input_dim: usize,
         _input_node_num: usize,
-        _output_feature: &Vec<Vec<usize>>,
+        _output_feature: &NodeFeatures,
     ) {
         self.remaining_cycle = 10;
         self.state = SparsifierState::Working;

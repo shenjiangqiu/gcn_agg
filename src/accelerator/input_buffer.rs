@@ -1,4 +1,6 @@
-use super::{component::Component, window_id::WindowId, sliding_window::InputWindow};
+use log::debug;
+
+use super::{component::Component, sliding_window::InputWindow, window_id::WindowId};
 use std::mem::swap;
 #[derive(Debug, Clone)]
 pub enum BufferStatus {
@@ -38,7 +40,7 @@ impl Component for InputBuffer<'_> {
     ///
     /// ```
     ///
-    fn cycle(&mut self)->Result<(),Box<dyn std::error::Error>> {
+    fn cycle(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         match (&self.current_state, &self.next_state) {
             // both are empty, do nothing
             (BufferStatus::Empty, BufferStatus::Empty) => {}
@@ -95,7 +97,7 @@ impl<'a> InputBuffer<'a> {
                     task_id: ref id, ..
                 }),
                 ..,
-            ) if id.as_ref() == id_ => {
+            ) if id == id_ => {
                 self.current_state = BufferStatus::Ready;
             }
 
@@ -106,7 +108,7 @@ impl<'a> InputBuffer<'a> {
                 Some(InputWindow {
                     task_id: ref id, ..
                 }),
-            ) if id.as_ref() == id_ => {
+            ) if id == id_ => {
                 self.next_state = BufferStatus::Ready;
             }
 
@@ -149,6 +151,7 @@ impl<'a> InputBuffer<'a> {
     }
 
     pub fn add_task_to_current(&mut self, window: InputWindow<'a>) {
+        debug!("input buffer receive current: {:?}", &window);
         self.current_state = BufferStatus::WaitingToLoad;
         self.current_window = Some(window);
     }
@@ -210,7 +213,7 @@ impl<'a> InputBuffer<'a> {
 
     pub fn get_current_id(&self) -> Option<&WindowId> {
         match &self.current_window {
-            Some(InputWindow { task_id: id, .. }) => Some(id.as_ref()),
+            Some(InputWindow { task_id: id, .. }) => Some(id),
             None => None,
         }
     }
@@ -248,14 +251,14 @@ impl<'a> InputBuffer<'a> {
 
     pub fn get_current_layer(&self) -> Option<usize> {
         match &self.current_window {
-            Some(InputWindow { task_id, .. }) => Some(task_id.as_ref().layer_id),
+            Some(InputWindow { task_id, .. }) => Some(task_id.layer_id),
             None => None,
         }
     }
 
     pub fn get_next_layer(&self) -> Option<usize> {
         match &self.next_window {
-            Some(InputWindow { task_id, .. }) => Some(task_id.as_ref().layer_id),
+            Some(InputWindow { task_id, .. }) => Some(task_id.layer_id),
             None => None,
         }
     }

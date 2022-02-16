@@ -82,8 +82,8 @@ impl Aggregator {
             Some(temp_agg_result) => {
                 let tasks = task.get_tasks().clone();
                 // collect tasks to Vec<Vec<usize>>
-                let output_start = task.start_x;
-                let output_end = task.end_x;
+                let output_start = task.start_output_index;
+                let output_end = task.end_output_index;
 
                 let cycles = self.get_add_sparse_cycle(
                     tasks,
