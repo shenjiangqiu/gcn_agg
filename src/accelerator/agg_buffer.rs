@@ -132,10 +132,16 @@ impl AggBuffer {
         self.next_state = BufferStatus::Empty;
     }
     pub fn get_current_window(&self) -> &Rc<OutputWindow> {
-        &self.current_window.as_ref().unwrap()
+        &self
+            .current_window
+            .as_ref()
+            .expect(format!("window should not be None!!").as_str())
     }
     pub fn get_next_window(&self) -> &Rc<OutputWindow> {
-        &self.next_window.as_ref().unwrap()
+        &self
+            .next_window
+            .as_ref()
+            .expect(format!("window should not be None!!").as_str())
     }
     pub fn get_current_state(&self) -> &BufferStatus {
         &self.current_state

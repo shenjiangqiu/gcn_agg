@@ -45,6 +45,7 @@ impl Component for InputBuffer<'_> {
             // current is empty, next is not empty, swap
             (BufferStatus::Empty, _) => {
                 swap(&mut self.current_state, &mut self.next_state);
+                swap(&mut self.current_window, &mut self.next_window);
             }
             // current is not empty, do nothing
             _ => {}

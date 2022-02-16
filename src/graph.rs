@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, fs::File, io::Read, vec};
+use std::{collections::BTreeSet, error::Error, fs::File, io::Read, vec};
 
 // build the structure of the graph
 #[derive(Debug)]
@@ -10,7 +10,7 @@ pub struct Graph {
     // the number of nodes
     pub total_nodes: usize,
 }
-impl From<&str> for Graph {
+impl Graph {
     /// read the graph from the file
     /// # Arguments
     /// * `file_name` - the path of the file
@@ -53,21 +53,21 @@ impl From<&str> for Graph {
     /// std::fs::remove_file(file_name).expect("failed to delete the file");
     /// ```
     ///
-    fn from(file_name: &str) -> Self {
+    pub fn new(file_name: &str) -> Result<Self, Box<dyn Error>> {
         let mut f = File::open(file_name).expect("file not found");
         let mut contents = String::new();
         f.read_to_string(&mut contents)
             .expect("something went wrong reading the file");
         let mut lines = contents.lines();
         // the first line should be like "f {feature_size}"
-        let first_line = lines.next().unwrap();
+        let first_line = lines.next().ok_or("no new line")?;
         let mut iter = first_line.split_whitespace();
         let f_char = iter.next();
         match f_char {
             Some("f") => {}
             _ => panic!("the first line should be like \"f feature_size\""),
         }
-        let feature_size = iter.next().unwrap().parse::<usize>().unwrap();
+        let feature_size = iter.next().ok_or("no new line")?.parse::<usize>()?;
 
         // the remaining lines should be like list of edges in csc format
         // from next line to the second last row, will contain the row index of the edges
@@ -81,7 +81,7 @@ impl From<&str> for Graph {
             let iter = line.split_whitespace();
             let mut row = BTreeSet::new();
             for i in iter {
-                row.insert(i.parse::<usize>().unwrap());
+                row.insert(i.parse::<usize>()?);
             }
             // add the row to the csc format
             csc.push(row);
@@ -94,7 +94,7 @@ impl From<&str> for Graph {
             total_nodes,
         };
         graph.generate_csr();
-        graph
+        Ok(graph)
     }
 }
 
@@ -110,18 +110,23 @@ impl Graph {
     }
     /// # Description
     /// test if a row is empty from col start to col end, for index i
-    pub fn is_row_range_empty(&self, i: usize, start: usize, end: usize) -> bool {
+    pub fn is_row_range_empty(
+        &self,
+        i: usize,
+        start: usize,
+        end: usize,
+    ) -> Result<bool, Box<dyn Error>> {
         match self
             .csr
             .as_ref()
-            .unwrap()
+            .ok_or("no csr")?
             .get(i)
-            .unwrap()
+            .ok_or(format!("no that line: {}", i))?
             .range(start..end)
             .next()
         {
-            Some(_) => false,
-            None => true,
+            Some(_) => Ok(false),
+            None => Ok(true),
         }
     }
 
@@ -148,7 +153,7 @@ mod graph_test {
 
     use super::*;
     #[test]
-    fn test_from_str() {
+    fn test_from_str() -> Result<(), Box<dyn Error>> {
         let file_name = "test_data/graph.txt";
         // write the graph to the file
         let data = "f 3\n0 1 2\n1 2 0\n2 0 1\nend\n";
@@ -157,7 +162,7 @@ mod graph_test {
             .expect("something went wrong writing the file");
         // read the graph from the file
 
-        let graph = Graph::from("test_data/graph.txt");
+        let graph = Graph::new("test_data/graph.txt")?;
         assert_eq!(graph.get_feature_size(), 3);
         assert_eq!(graph.get_csc()[0].contains(&0), true);
         assert_eq!(graph.get_csc()[0].contains(&1), true);
@@ -171,9 +176,10 @@ mod graph_test {
         assert_eq!(graph.get_csc()[2].contains(&2), true);
         // delete the file
         std::fs::remove_file(file_name).expect("failed to delete the file");
+        Ok(())
     }
     #[test]
-    fn test_csr() {
+    fn test_csr() -> Result<(), Box<dyn Error>> {
         let file_name = "test_data/graph.txt";
         // write the graph to the file
         let data = "f 3\n0 1\n1 2\n2 0\nend\n";
@@ -182,7 +188,7 @@ mod graph_test {
             .expect("something went wrong writing the file");
         // read the graph from the file
 
-        let mut graph = Graph::from("test_data/graph.txt");
+        let mut graph = Graph::new("test_data/graph.txt")?;
         graph.generate_csr();
 
         if let Some(csr) = graph.get_csr() {
@@ -196,5 +202,6 @@ mod graph_test {
         } else {
             panic!("csr is not generated");
         }
+        Ok(())
     }
 }

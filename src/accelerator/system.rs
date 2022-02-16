@@ -1,15 +1,16 @@
-use super::component::Component;
-use super::mlp::{self, Mlp};
-use super::output_buffer;
-use super::sparsifier::Sparsifier;
 use super::{
     agg_buffer::{self, AggBuffer},
     aggregator::{self, Aggregator},
+    component::Component,
     input_buffer::{self, InputBuffer},
     mem_interface::MemInterface,
+    mlp::{self, Mlp},
     output_buffer::OutputBuffer,
     sliding_window::{InputWindow, InputWindowIterator, OutputWindowIterator},
+    sparsifier::Sparsifier,
+    sparsify_buffer::{self, SparsifyBuffer},
 };
+
 use log::debug;
 /// # Description
 /// the state for the system
@@ -24,6 +25,7 @@ enum SystemState {
     Finished,
 }
 
+use crate::gcn_result::GcnStatistics;
 use crate::{graph::Graph, node_features::NodeFeatures};
 
 #[derive(Debug)]
@@ -34,6 +36,7 @@ pub struct System<'a> {
     aggregator: Aggregator,
     input_buffer: InputBuffer<'a>,
     output_buffer: OutputBuffer,
+    sparsify_buffer: SparsifyBuffer,
     agg_buffer: AggBuffer,
     mem_interface: MemInterface,
     sparsifier: Sparsifier,
@@ -62,173 +65,28 @@ impl Component for System<'_> {
     fn cycle(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         match &self.state {
             SystemState::Working => {
+                // all components are: input_buffer, output_buffer, agg_buffer, mlp, sparsifier, aggregator, mem_interface, mlp
+
                 self.aggregator.cycle()?;
                 self.mem_interface.cycle()?;
                 self.agg_buffer.cycle()?;
                 self.input_buffer.cycle()?;
                 self.output_buffer.cycle()?;
-                // add task to current input_buffer or send request to memory
-                match self.input_buffer.get_current_state() {
-                    input_buffer::BufferStatus::Empty => {
-                        // add a task to the input buffer
-                        // self.input_buffer.send_req(self.current_input_iter.as_ref().unwrap());
-                        let window = self.current_window.take().unwrap();
+                self.sparsifier.cycle()?;
+                self.mlp.cycle()?;
 
-                        self.input_buffer.add_task_to_current(window);
-                        self.move_to_next_window();
-                        return Ok(());
-                    }
-                    // need to send request to memory
-                    input_buffer::BufferStatus::WaitingToLoad => {
-                        if self.mem_interface.available() {
-                            // generate addr from the req and window
+                self.handle_input_buffer_add_task()?;
+                self.handle_input_buffer_to_mem()?;
+                self.handle_mem_to_input_buffer()?;
 
-                            let mut addr_vec = vec![];
-                            let window = self
-                                .input_buffer
-                                .get_current_window()
-                                .expect("no window in input buffer");
-                            let window_layer = window.get_task_id().layer_id;
-                            let start_addrs = &self
-                                .node_features
-                                .get(window_layer)
-                                .expect("no such layer in nodefeatures")
-                                .start_addrs;
-                            let mut start_addr = start_addrs[window.start_x];
-                            let end_addr = start_addrs[window.end_x];
-                            // round start_addr to the nearest 64
-                            start_addr = start_addr / 64 * 64;
-                            while start_addr < end_addr {
-                                addr_vec.push(start_addr);
-                                start_addr += 64;
-                            }
-                            self.mem_interface
-                                .send(window.get_task_id().clone(), addr_vec, false);
-                            self.input_buffer.send_req(true);
-                            return Ok(());
-                        }
-                    }
-                    _ => {
-                        // println!("input buffer is unknown");
-                    }
-                }
-                // add task to next input_buffer or send request to memory
-                match self.input_buffer.get_next_state() {
-                    input_buffer::BufferStatus::Empty => {
-                        // add a task to the input buffer
-                        // self.input_buffer.send_req(self.current_input_iter.as_ref().unwrap());
-                        let window = self.current_window.take().unwrap();
-                        self.input_buffer.add_task_to_current(window);
-                        self.move_to_next_window();
-                        return Ok(());
-                    }
-                    input_buffer::BufferStatus::WaitingToLoad => {
-                        if self.mem_interface.available() {
-                            // generate addr from the req and window
+                self.handle_start_aggregator()?;
+                self.handle_finish_aggregator()?;
 
-                            let mut addr_vec = vec![];
-                            let window = self
-                                .input_buffer
-                                .get_current_window()
-                                .expect("no window in input buffer");
-                            let window_layer = window.get_task_id().layer_id;
-                            let start_addrs = &self
-                                .node_features
-                                .get(window_layer)
-                                .expect("no such layer in nodefeatures")
-                                .start_addrs;
-                            let mut start_addr = start_addrs[window.start_x];
-                            let end_addr = start_addrs[window.end_x];
-                            // round start_addr to the nearest 64
-                            start_addr = start_addr / 64 * 64;
-                            while start_addr < end_addr {
-                                addr_vec.push(start_addr);
-                                start_addr += 64;
-                            }
-                            self.mem_interface
-                                .send(window.get_task_id().clone(), addr_vec, false);
-                            self.input_buffer.send_req(false);
-                            return Ok(());
-                        }
-                    }
-                    _ => {
-                        // println!("input buffer is unknown");
-                    }
-                }
+                self.handle_start_mlp()?;
+                self.handle_finish_mlp()?;
 
-                // test if there are memory request return
-                if self.mem_interface.ret_ready() {
-                    let ret_req = self.mem_interface.receive_pop();
-                    self.input_buffer.receive(&ret_req);
-                    return Ok(());
-                }
-
-                // test if the aggregator is ready to start
-                match (
-                    self.input_buffer.get_current_state(),
-                    self.aggregator.get_state(),
-                    &self.agg_buffer.current_state,
-                ) {
-                    (
-                        input_buffer::BufferStatus::Ready,
-                        aggregator::AggregatorState::Idle,
-                        agg_buffer::BufferStatus::Empty | agg_buffer::BufferStatus::Writing,
-                    ) => {
-                        // start the aggregator
-                        debug!(
-                            "start the aggregator,agg window: {:?}",
-                            self.input_buffer.get_current_window()
-                        );
-                        let current_window = self.input_buffer.get_current_window().unwrap();
-                        let window_layer = current_window.get_task_id().layer_id;
-
-                        // start the aggregator
-                        self.agg_buffer
-                            .add_task(current_window.get_output_window().clone());
-                        self.aggregator.add_task(
-                            current_window,
-                            self.node_features.get(window_layer).unwrap(),
-                            &mut self.agg_buffer.current_temp_result,
-                        );
-                        self.input_buffer.current_state = input_buffer::BufferStatus::Reading;
-                        return Ok(());
-                    }
-                    _ => {}
-                }
-
-                // test if the aggregator is finished
-                match self.aggregator.get_state() {
-                    aggregator::AggregatorState::Finished => {
-                        // 1. make the aggregator idle
-                        self.aggregator.state = aggregator::AggregatorState::Idle;
-                        // 2. set the input buffer to empty
-                        self.input_buffer.current_state = input_buffer::BufferStatus::Empty;
-                        return Ok(());
-                    }
-                    _ => {}
-                }
-                // test if start the mlp
-                match (
-                    self.agg_buffer.get_next_state(),
-                    &self.mlp.state,
-                    &self.output_buffer.current_state,
-                ) {
-                    (
-                        agg_buffer::BufferStatus::WaitingToMlp,
-                        mlp::MlpState::Idle,
-                        output_buffer::BufferStatus::Empty,
-                    ) => {
-                        // start the mlp
-                        let current_window = self.agg_buffer.get_current_window();
-                        self.mlp
-                            .start_mlp(current_window, &self.agg_buffer.next_temp_result);
-                        self.agg_buffer.start_mlp();
-                        self.output_buffer.start_mlp();
-
-                        return Ok(());
-                    }
-                    _ => {}
-                }
+                self.handle_start_sparsifier()?;
+                self.handle_finish_sparsifier()?;
             }
 
             SystemState::Finished => {
@@ -261,6 +119,7 @@ impl<'a> System<'a> {
 
         let input_buffer = InputBuffer::new();
         let output_buffer = OutputBuffer::new();
+        let sparsify_buffer = SparsifyBuffer::new();
         let agg_buffer = AggBuffer::new(graph.get_num_node());
         let mem_interface = MemInterface::new(64, 64);
         let mlp = Mlp::new(systolic_rows, systolic_cols, mlp_sparse_cores);
@@ -290,6 +149,7 @@ impl<'a> System<'a> {
             aggregator,
             input_buffer,
             output_buffer,
+            sparsify_buffer,
             agg_buffer,
             mem_interface,
             graph,
@@ -356,13 +216,15 @@ impl<'a> System<'a> {
     /// keep running until all finished
     /// * for each cycle, it will call the cycle function
     /// * and increase the total_cycle
-    pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(&mut self) -> Result<GcnStatistics, Box<dyn std::error::Error>> {
         while !self.finished {
             self.cycle()?;
             self.total_cycle += 1;
         }
         self.print_stats();
-        Ok(())
+        let mut gcn_statistics = GcnStatistics::new();
+        gcn_statistics.cycle = self.total_cycle;
+        Ok(gcn_statistics)
     }
 
     pub fn finished(&self) -> bool {
@@ -370,6 +232,253 @@ impl<'a> System<'a> {
     }
     fn print_stats(&self) {
         println!("Total cycles: {}", self.total_cycle);
+    }
+
+    fn handle_input_buffer_to_mem(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // add task to current input_buffer or send request to memory
+        match self.input_buffer.get_current_state() {
+            // need to send request to memory
+            input_buffer::BufferStatus::WaitingToLoad => {
+                if self.mem_interface.available() {
+                    // generate addr from the req and window
+
+                    let mut addr_vec = vec![];
+                    let window = self
+                        .input_buffer
+                        .get_current_window()
+                        .expect("no window in input buffer");
+                    let window_layer = window.get_task_id().layer_id;
+                    let start_addrs = &self
+                        .node_features
+                        .get(window_layer)
+                        .expect("no such layer in nodefeatures")
+                        .start_addrs;
+                    let mut start_addr = start_addrs[window.start_x];
+                    let end_addr = start_addrs[window.end_x];
+                    // round start_addr to the nearest 64
+                    start_addr = start_addr / 64 * 64;
+                    while start_addr < end_addr {
+                        addr_vec.push(start_addr);
+                        start_addr += 64;
+                    }
+                    self.mem_interface
+                        .send(window.get_task_id().clone(), addr_vec, false);
+                    self.input_buffer.send_req(true);
+                    return Ok(());
+                }
+            }
+            _ => {}
+        }
+        // add task to next input_buffer or send request to memory
+        match self.input_buffer.get_next_state() {
+            input_buffer::BufferStatus::WaitingToLoad => {
+                if self.mem_interface.available() {
+                    // generate addr from the req and window
+
+                    let mut addr_vec = vec![];
+                    let window = self
+                        .input_buffer
+                        .get_current_window()
+                        .expect("no window in input buffer");
+                    let window_layer = window.get_task_id().layer_id;
+                    let start_addrs = &self
+                        .node_features
+                        .get(window_layer)
+                        .expect("no such layer in nodefeatures")
+                        .start_addrs;
+                    let mut start_addr = start_addrs[window.start_x];
+                    let end_addr = start_addrs[window.end_x];
+                    // round start_addr to the nearest 64
+                    start_addr = start_addr / 64 * 64;
+                    while start_addr < end_addr {
+                        addr_vec.push(start_addr);
+                        start_addr += 64;
+                    }
+                    self.mem_interface
+                        .send(window.get_task_id().clone(), addr_vec, false);
+                    self.input_buffer.send_req(false);
+                    return Ok(());
+                }
+            }
+            _ => {
+                // println!("input buffer is unknown");
+            }
+        }
+
+        Ok(())
+    }
+
+    fn handle_input_buffer_add_task(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // add task to current input_buffer or send request to memory
+        match self.input_buffer.get_current_state() {
+            input_buffer::BufferStatus::Empty => {
+                // add a task to the input buffer
+                // self.input_buffer.send_req(self.current_input_iter.as_ref().unwrap());
+                let window = self.current_window.take().unwrap();
+
+                self.input_buffer.add_task_to_current(window);
+                self.move_to_next_window();
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        match self.input_buffer.get_next_state() {
+            input_buffer::BufferStatus::Empty => {
+                // add a task to the input buffer
+                // self.input_buffer.send_req(self.current_input_iter.as_ref().unwrap());
+                let window = self.current_window.take().unwrap();
+                self.input_buffer.add_task_to_next(window);
+                self.move_to_next_window();
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    fn handle_mem_to_input_buffer(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // test if there are memory request return
+        if let Some(ret_req) = self.mem_interface.receive_pop() {
+            self.input_buffer.receive(&ret_req);
+            return Ok(());
+        }
+        Ok(())
+    }
+
+    fn handle_start_aggregator(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // test if the aggregator is ready to start
+        match (
+            self.input_buffer.get_current_state(),
+            self.aggregator.get_state(),
+            &self.agg_buffer.current_state,
+        ) {
+            (
+                input_buffer::BufferStatus::Ready,
+                aggregator::AggregatorState::Idle,
+                agg_buffer::BufferStatus::Empty | agg_buffer::BufferStatus::Writing,
+            ) => {
+                // start the aggregator
+                debug!(
+                    "start the aggregator,agg window: {:?}",
+                    self.input_buffer.get_current_window()
+                );
+                let current_window = self.input_buffer.get_current_window().unwrap();
+                let window_layer = current_window.get_task_id().layer_id;
+
+                // start the aggregator
+                self.agg_buffer
+                    .add_task(current_window.get_output_window().clone());
+                self.aggregator.add_task(
+                    current_window,
+                    self.node_features.get(window_layer).unwrap(),
+                    &mut self.agg_buffer.current_temp_result,
+                );
+                self.input_buffer.current_state = input_buffer::BufferStatus::Reading;
+                return Ok(());
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_finish_aggregator(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // test if the aggregator is finished
+        match self.aggregator.get_state() {
+            aggregator::AggregatorState::Finished => {
+                // 1. make the aggregator idle
+                self.aggregator.state = aggregator::AggregatorState::Idle;
+                // 2. set the input buffer to empty
+                self.input_buffer.current_state = input_buffer::BufferStatus::Empty;
+                return Ok(());
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_start_mlp(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // test if start the mlp
+        //
+        match (
+            self.agg_buffer.get_next_state(),
+            &self.mlp.state,
+            &self.sparsify_buffer.current_state,
+        ) {
+            (
+                agg_buffer::BufferStatus::WaitingToMlp,
+                mlp::MlpState::Idle,
+                sparsify_buffer::BufferStatus::Empty,
+            ) => {
+                // start the mlp
+                let current_window = self.agg_buffer.get_current_window();
+                self.mlp
+                    .start_mlp(current_window, &self.agg_buffer.next_temp_result);
+                self.agg_buffer.start_mlp();
+                self.sparsify_buffer.start_mlp();
+
+                return Ok(());
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_finish_mlp(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // test if the mlp is finished
+        match self.mlp.state {
+            mlp::MlpState::Finished => {
+                // 1. make the mlp idle
+                self.mlp.state = mlp::MlpState::Idle;
+                // 2. set the output buffer to empty
+                self.sparsify_buffer.current_state = sparsify_buffer::BufferStatus::WaitingToSparsify;
+                return Ok(());
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_start_sparsifier(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // test if start the sparsifier
+        //
+        // match (
+        //     self.output_buffer.get_next_state(),
+        //     &self.sparsifier.state,
+        //     &self.output_buffer.current_state,
+        // ) {
+        //     (
+        //         output_buffer::BufferStatus::WaitingToSparsifier,
+        //         sparsifier::SparsifierState::Idle,
+        //         output_buffer::BufferStatus::Empty,
+        //     ) => {
+        //         // start the sparsifier
+        //         let current_window = self.output_buffer.get_current_window();
+        //         self.sparsifier
+        //             .start_sparsifier(current_window, &self.output_buffer.next_temp_result);
+        //         self.output_buffer.start_sparsifier();
+
+        //         return Ok(());
+        //     }
+        //     _ => {}
+        // }
+        Ok(())
+    }
+
+    fn handle_finish_sparsifier(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // test if the sparsifier is finished
+        // match self.sparsifier.get_state() {
+        //     sparsifier::SparsifierState::Finished => {
+        //         // 1. make the sparsifier idle
+        //         self.sparsifier.state = sparsifier::SparsifierState::Idle;
+        //         // 2. set the output buffer to empty
+        //         self.output_buffer.current_state = output_buffer::BufferStatus::Empty;
+        //         return Ok(());
+        //     }
+        //     _ => {}
+        // }
+        Ok(())
     }
 }
 
@@ -388,8 +497,8 @@ mod test {
         let data = "0 0 1 0 1 0\n1 0 0 1 1 1\n1 1 0 0 0 1\n";
         let mut file = File::create("test_data/features.txt").unwrap();
         file.write_all(data.as_bytes()).unwrap();
-        let graph = Graph::from(graph_name);
-        let node_features = NodeFeatures::from(features_name);
+        let graph = Graph::new(graph_name)?;
+        let node_features = NodeFeatures::new(features_name)?;
         let node_features = vec![node_features];
         let gcn_hidden_size = vec![2, 2];
         let mut system = System::new(
@@ -424,8 +533,8 @@ mod test {
         let mut file = File::create("test_data/features.txt").unwrap();
         file.write_all(data.as_bytes()).unwrap();
 
-        let _graph = Graph::from(graph_name);
-        let _node_features = NodeFeatures::from(features_name);
+        let _graph = Graph::new(graph_name).unwrap();
+        let _node_features = NodeFeatures::new(features_name).unwrap();
         // let mut window_iter = WindowIterator::new(&graph, &node_features, 1, 1, 1);
         // for i in window_iter {
         //     println!("{:?}", i);

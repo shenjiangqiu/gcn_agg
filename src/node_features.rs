@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::fs::File;
 use std::io::Read;
 
@@ -7,7 +8,7 @@ pub struct NodeFeatures {
     pub start_addrs: Vec<u64>,
 }
 
-impl From<&str> for NodeFeatures {
+impl NodeFeatures {
     ///
     /// # Arguments
     /// * file_name - The name of the file to read
@@ -31,8 +32,8 @@ impl From<&str> for NodeFeatures {
     ///         let data = "0 0 1 0 1 0\n1 0 0 1 1 1\n1 1 0 0 0 1\n";
     /// let file_name = "test_data/node_features.txt";
     /// // write the data to the file
-    /// let mut file = File::create(file_name).unwrap();
-    /// file.write_all(data.as_bytes()).unwrap();
+    /// let mut file = File::create(file_name)?;
+    /// file.write_all(data.as_bytes())?;
     ///
     /// let node_features = NodeFeatures::from(file_name);
     /// assert_eq!(node_features.len(), 3);
@@ -52,21 +53,21 @@ impl From<&str> for NodeFeatures {
     /// assert_eq!(node_features.get_features(2)[2], 5);
     ///
     /// // delete the file
-    /// std::fs::remove_file(file_name).unwrap();
+    /// std::fs::remove_file(file_name)?;
     ///
     /// ```
-    fn from(file_name: &str) -> Self {
+    pub fn new(file_name: &str) -> Result<Self, Box<dyn Error>> {
         // the file contains adjacency matrix
         // each line is a node
-        let mut file = File::open(file_name).unwrap();
+        let mut file = File::open(file_name)?;
         let mut contents = String::new();
-        file.read_to_string(&mut contents).unwrap();
+        file.read_to_string(&mut contents)?;
         let mut features = Vec::new();
 
         for line in contents.lines() {
             let mut line_vec = Vec::new();
             for num in line.split_whitespace() {
-                line_vec.push(num.parse::<usize>().unwrap());
+                line_vec.push(num.parse::<usize>()?);
             }
             // convert the line to csc format
             let mut csc_line = Vec::new();
@@ -84,10 +85,10 @@ impl From<&str> for NodeFeatures {
         for i in 1..=features.len() {
             start_addrs.push(start_addrs[i - 1] + features[i - 1].len() as u64 * 4);
         }
-        NodeFeatures {
+        Ok(NodeFeatures {
             features,
             start_addrs,
-        }
+        })
     }
 }
 impl NodeFeatures {
@@ -106,14 +107,14 @@ mod test {
     use std::io::Write;
 
     #[test]
-    fn test_node_features() {
+    fn test_node_features() -> Result<(), Box<dyn Error>> {
         let data = "0 0 1 0 1 0\n1 0 0 1 1 1\n1 1 0 0 0 1\n";
         let file_name = "test_data/node_features.txt";
         // write the data to the file
-        let mut file = File::create(file_name).unwrap();
-        file.write_all(data.as_bytes()).unwrap();
+        let mut file = File::create(file_name)?;
+        file.write_all(data.as_bytes())?;
 
-        let node_features = NodeFeatures::from(file_name);
+        let node_features = NodeFeatures::new(file_name)?;
         assert_eq!(node_features.len(), 3);
         assert_eq!(node_features.get_features(0).len(), 2);
         assert_eq!(node_features.get_features(1).len(), 4);
@@ -131,6 +132,7 @@ mod test {
         assert_eq!(node_features.get_features(2)[2], 5);
 
         // delete the file
-        std::fs::remove_file(file_name).unwrap();
+        std::fs::remove_file(file_name)?;
+        Ok(())
     }
 }

@@ -1,0 +1,2 @@
+# configs in this folder will not be automatically loaded, should pass to command line manually:
+# example: gcn_agg configs/optional_configs/cora.toml

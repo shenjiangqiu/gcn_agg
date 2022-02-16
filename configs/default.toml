@@ -1,3 +1,4 @@
+description = "the default config, you should add your own config to override some of these entries"
 features_paths = ["cora.content", "cora.cites"]
 graph_path = "cora.graph"
 [accelerator_settings]
@@ -5,14 +6,14 @@ agg_buffer_size = 10
 gcn_hidden_size = [16, 16]
 input_buffer_size = 10
 output_buffer_size = 10
-    [accelerator_settings.aggregator_settings]
-    dense_cores = 10
-    dense_width = 10
-    sparse_cores = 10
-    sparse_width = 10
-    [accelerator_settings.mlp_settings]
-    mlp_sparse_cores = 10
-    systolic_cols = 10
-    systolic_rows = 10
-    [accelerator_settings.sparsifier_settings]
-    sparsifier_cores = 10
+[accelerator_settings.aggregator_settings]
+dense_cores = 10
+dense_width = 10
+sparse_cores = 10
+sparse_width = 10
+[accelerator_settings.mlp_settings]
+mlp_sparse_cores = 10
+systolic_cols = 10
+systolic_rows = 10
+[accelerator_settings.sparsifier_settings]
+sparsifier_cores = 10

@@ -194,11 +194,11 @@ impl<'a> Iterator for InputWindowIterator<'a> {
         } else {
             // first skip all emtpy rows
             while self.current_window_start_x < self.graph.get_num_node() {
-                if self.graph.is_row_range_empty(
-                    self.current_window_start_x,
-                    self.start_y,
-                    self.end_y,
-                ) {
+                if self
+                    .graph
+                    .is_row_range_empty(self.current_window_start_x, self.start_y, self.end_y)
+                    .expect("is_row_range_empty should always return Some")
+                {
                     self.current_window_start_x += 1;
                 } else {
                     break;
@@ -226,11 +226,11 @@ impl<'a> Iterator for InputWindowIterator<'a> {
             }
             // shrink the window
             self.current_window_end_x = self.current_window_start_x + x_len;
-            while self.graph.is_row_range_empty(
-                self.current_window_end_x - 1,
-                self.start_y,
-                self.end_y,
-            ) {
+            while self
+                .graph
+                .is_row_range_empty(self.current_window_end_x - 1, self.start_y, self.end_y)
+                .expect("is_row_range_empty should always return Some")
+            {
                 self.current_window_end_x -= 1;
             }
 
@@ -295,8 +295,8 @@ mod test {
         let mut file = File::create("test_data/features.txt").unwrap();
         file.write_all(data.as_bytes()).unwrap();
 
-        let graph = Graph::from(graph_name);
-        let node_features = NodeFeatures::from(features_name);
+        let graph = Graph::new(graph_name).unwrap();
+        let node_features = NodeFeatures::new(features_name).unwrap();
         let gcn_hidden_size = vec![2, 2];
         let output_window_iter =
             OutputWindowIterator::new(&graph, &node_features, 20, 20, 0, &gcn_hidden_size);

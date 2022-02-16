@@ -51,8 +51,7 @@ impl Component for MemInterface {
     /// note that: need to delete the request from current_waiting_request and current_waiting_mem_request
     ///
     fn cycle(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if self.send_queue.len() > 0 {
-            let req = self.send_queue.front_mut().unwrap();
+        if let Some(req) = self.send_queue.front_mut() {
             while let Some(addr) = req.addr_vec.pop() {
                 if self.mem.available(addr, req.is_write) {
                     self.mem.send(addr, req.is_write);
@@ -76,9 +75,15 @@ impl Component for MemInterface {
 
         while self.mem.ret_available() && self.recv_queue.len() < self.recv_size {
             let addr = self.mem.get();
-            let id_list = self.current_waiting_mem_request.remove(&addr).unwrap();
+            let id_list = self
+                .current_waiting_mem_request
+                .remove(&addr)
+                .expect(format!("no request for addr {}", addr).as_str());
             for id in id_list {
-                let req = self.current_waiting_request.get_mut(&id).unwrap();
+                let req = self
+                    .current_waiting_request
+                    .get_mut(&id)
+                    .expect(format!("no request for id {:?}", id).as_str());
                 req.remove(&addr);
                 if req.len() == 0 {
                     self.current_waiting_request.remove(&id);
@@ -110,9 +115,11 @@ impl MemInterface {
     }
     /// # Description
     /// * is the interface ready to send a response
-    pub fn ret_ready(&self) -> bool {
-        self.recv_queue.len() > 0
-    }
+    /// - the reason I delete this function: In rust, use let Some is better!
+    // pub fn ret_ready(&self) -> bool {
+    //     self.recv_queue.len() > 0
+    // }
+
     /// # Description
     /// * send a request to memory
     pub fn send(&mut self, id_: WindowId, addr_vec: Vec<u64>, is_write: bool) {
@@ -122,43 +129,41 @@ impl MemInterface {
     /// # Description
     /// * receive a response from memory and keep the request ***still in mem(not pop it)***
     #[allow(dead_code)]
-    pub fn receive(&self) -> WindowId {
-        let req = self.recv_queue.front().unwrap();
-        req.clone()
+    pub fn receive(&self) -> Option<&WindowId> {
+        self.recv_queue.front()
     }
     /// # Description
     /// * receive a response from memory and pop that request
     #[allow(dead_code)]
-    pub fn receive_pop(&mut self) -> WindowId {
-        let req = self.recv_queue.pop_front().unwrap();
-        req
+    pub fn receive_pop(&mut self) -> Option<WindowId> {
+        self.recv_queue.pop_front()
     }
 }
 
 #[cfg(test)]
 mod tests {
 
-    use crate::accelerator::window_id::WindowId;
     use super::*;
+    use crate::accelerator::window_id::WindowId;
 
     #[test]
     fn test_mem_interface() -> Result<(), Box<dyn std::error::Error>> {
         let mut mem_interface = super::MemInterface::new(1, 1);
         assert_eq!(mem_interface.available(), true);
-        assert_eq!(mem_interface.ret_ready(), false);
+        assert_eq!(mem_interface.receive().is_some(), false);
         mem_interface.send(WindowId::new(1, 1, 1), vec![0], false);
         assert_eq!(mem_interface.available(), false);
-        assert_eq!(mem_interface.ret_ready(), false);
+        assert_eq!(mem_interface.receive().is_some(), false);
 
-        while !mem_interface.ret_ready() {
+        while !mem_interface.receive().is_some() {
             mem_interface.cycle()?;
         }
 
         assert_eq!(mem_interface.available(), true);
-        assert_eq!(mem_interface.ret_ready(), true);
+        assert_eq!(mem_interface.receive().is_some(), true);
 
-        let result = mem_interface.receive();
-        assert_eq!(result, WindowId::new(1, 1, 1));
+        let result = mem_interface.receive().expect("no response");
+        assert_eq!(*result, WindowId::new(1, 1, 1));
         assert_eq!(mem_interface.current_waiting_mem_request.is_empty(), true);
         assert_eq!(mem_interface.current_waiting_request.is_empty(), true);
         Ok(())

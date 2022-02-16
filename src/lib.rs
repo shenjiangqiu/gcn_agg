@@ -13,3 +13,4 @@ pub mod graph;
 pub mod node_features;
 pub mod statics;
 pub mod settings;
+pub mod gcn_result;
