@@ -12,6 +12,8 @@ use gcn_agg::{
 
 #[test]
 fn test_system() -> Result<(), Box<dyn std::error::Error>> {
+    std::fs::create_dir_all("output")?;
+
     simple_logger::init_with_level(log::Level::Debug)?;
 
     let start_time = std::time::Instant::now();

@@ -154,7 +154,7 @@ mod graph_test {
     use super::*;
     #[test]
     fn test_from_str() -> Result<(), Box<dyn Error>> {
-        let file_name = "test_data/graph_graph.txt";
+        let file_name = "test_data/graph_graph_str.txt";
         // write the graph to the file
         let data = "f 3\n0 1 2\n1 2 0\n2 0 1\nend\n";
         let mut f = File::create(file_name).expect("file not found");
@@ -180,7 +180,7 @@ mod graph_test {
     }
     #[test]
     fn test_csr() -> Result<(), Box<dyn Error>> {
-        let file_name = "test_data/graph.txt";
+        let file_name = "test_data/graph_csr.txt";
         // write the graph to the file
         let data = "f 3\n0 1\n1 2\n2 0\nend\n";
         let mut f = File::create(file_name).expect("file not found");
@@ -188,7 +188,7 @@ mod graph_test {
             .expect("something went wrong writing the file");
         // read the graph from the file
 
-        let mut graph = Graph::new("test_data/graph.txt")?;
+        let mut graph = Graph::new(file_name)?;
         graph.generate_csr();
 
         if let Some(csr) = graph.get_csr() {
