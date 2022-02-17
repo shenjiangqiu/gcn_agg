@@ -289,9 +289,9 @@ dependencies = [
 
 [[package]]
 name = "ramulator_wrapper"
-version = "0.0.2"
+version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43945000e291a0e1aba8ee6ee40625f869cba7e09c64f8f6bf8ea8445bd6228b"
+checksum = "fab21d6652627408f20dbf32bf83d4803a9dbc7d5e743c8f1c7411fd425085a1"
 dependencies = [
  "cmake",
  "libc",

@@ -1,5 +1,5 @@
 /target
 mem_stats.txt
-/output
+/output/*
 mem_stat*
 test_data/

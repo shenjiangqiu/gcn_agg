@@ -784,6 +784,8 @@ mod test {
     use std::{fs::File, io::Write};
     #[test]
     fn test_system() -> Result<(), Box<dyn std::error::Error>> {
+        std::fs::create_dir_all("output")?;
+
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
         let graph_name = "test_data/graph_system.txt";
@@ -832,6 +834,8 @@ mod test {
     }
     #[test]
     fn window_iter_test() {
+        std::fs::create_dir_all("output").unwrap();
+
         let graph_name = "test_data/graph.txt";
         let features_name = "test_data/features.txt";
         let data = "f 3\n0 1 2\n1 2 0\n2 0 1\nend\n";

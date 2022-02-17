@@ -197,7 +197,9 @@ mod tests {
 
     #[test]
     fn test_mem_interface() -> Result<(), Box<dyn std::error::Error>> {
-        simple_logger::init_with_level(log::Level::Warn).unwrap_or_default();
+        std::fs::create_dir_all("output")?;
+
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
         let mut mem_interface = super::MemInterface::new(10, 10, "test3_mem_stat.txt");
         assert_eq!(mem_interface.available(), true);
         // assert_eq!(mem_interface.receive().is_some(), false);
