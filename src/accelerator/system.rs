@@ -786,7 +786,7 @@ mod test {
     fn test_system() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::create_dir_all("output")?;
 
-        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+        simple_logger::init_with_level(log::Level::Warn).unwrap_or_default();
 
         let graph_name = "test_data/graph_system.txt";
         let graph_data = "f 6\n1 2\n2 3 4\n0 1 4\n0 2 4\n2 4\nend\n";
