@@ -290,7 +290,8 @@ dependencies = [
 [[package]]
 name = "ramulator_wrapper"
 version = "0.0.1"
-source = "git+https://github.com/shenjiangqiu/ramulator-wrapper#0303e3e98e92177eee8963d5ee6abc3d29af753c"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48ef316e52d66373c618b7997511e51356ee922eb3128118c4e90b2cb408dc8a"
 dependencies = [
  "cmake",
  "libc",
