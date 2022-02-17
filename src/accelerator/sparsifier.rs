@@ -61,4 +61,13 @@ impl Sparsifier {
         self.remaining_cycle = 10;
         self.state = SparsifierState::Working;
     }
+
+    pub fn add_task_last_layer(&mut self) {
+        self.remaining_cycle = 1;
+        self.state = SparsifierState::Working;
+    }
+
+    pub fn finished_sparsify(&self) -> bool {
+        self.state == SparsifierState::Idle
+    }
 }

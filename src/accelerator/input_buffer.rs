@@ -22,7 +22,7 @@ impl Component for InputBuffer<'_> {
     /// simply swap the current and next state when current state is Empty
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// use gcn_agg::accelerator::{input_buffer::{InputBuffer, BufferStatus}};
     /// let mut input_buffer = InputBuffer::new();
     /// input_buffer.current_state = BufferStatus::Empty;
@@ -70,7 +70,7 @@ impl<'a> InputBuffer<'a> {
     /// * make the Loading status to Ready status
     /// * either of current or next state is Loading status
     /// # Example
-    /// ```
+    /// ```ignore
     /// use gcn_agg::accelerator::{input_buffer::{InputBuffer, BufferStatus}};
     /// let mut input_buffer = InputBuffer::new();
     /// input_buffer.current_state = BufferStatus::Empty;
@@ -125,7 +125,7 @@ impl<'a> InputBuffer<'a> {
     /// * if there is no waiting id, return None
     /// * if there is a waiting id, return Some(id)
     /// # example
-    /// ```
+    /// ```ignore
     ///
     /// use gcn_agg::accelerator::input_buffer::{InputBuffer, BufferStatus};
     /// let mut input_buffer = InputBuffer::new();
@@ -261,5 +261,9 @@ impl<'a> InputBuffer<'a> {
             Some(InputWindow { task_id, .. }) => Some(task_id.layer_id),
             None => None,
         }
+    }
+
+    pub fn finished_aggregation(&mut self) {
+        self.current_state = BufferStatus::Empty;
     }
 }

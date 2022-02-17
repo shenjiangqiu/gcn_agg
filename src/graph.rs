@@ -28,7 +28,7 @@ impl Graph {
     /// the following lines are the edges
     /// the last line is end or END
     /// # Examples
-    /// ```
+    /// ```ignore
     /// use gcn_agg::graph::Graph;
     /// use std::{fs::File, io::{Read,Write}};
     /// let file_name="test_data/graph.txt";
@@ -154,7 +154,7 @@ mod graph_test {
     use super::*;
     #[test]
     fn test_from_str() -> Result<(), Box<dyn Error>> {
-        let file_name = "test_data/graph.txt";
+        let file_name = "test_data/graph_graph.txt";
         // write the graph to the file
         let data = "f 3\n0 1 2\n1 2 0\n2 0 1\nend\n";
         let mut f = File::create(file_name).expect("file not found");
@@ -162,7 +162,7 @@ mod graph_test {
             .expect("something went wrong writing the file");
         // read the graph from the file
 
-        let graph = Graph::new("test_data/graph.txt")?;
+        let graph = Graph::new(file_name)?;
         assert_eq!(graph.get_feature_size(), 3);
         assert_eq!(graph.get_csc()[0].contains(&0), true);
         assert_eq!(graph.get_csc()[0].contains(&1), true);

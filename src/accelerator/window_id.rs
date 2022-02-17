@@ -1,18 +1,16 @@
-
-
 /// # Description
 /// - struct Req define a window
-#[derive(Debug, Clone, PartialEq, Eq,Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WindowId {
-    pub col_id: usize,
-    pub row_id: usize,
+    pub output_id: usize,
+    pub input_id: usize,
     pub layer_id: usize,
 }
 impl WindowId {
-    pub fn new(col_id: usize, row_id: usize, layer_id: usize) -> Self {
+    pub fn new(output_id: usize, input_id: usize, layer_id: usize) -> Self {
         WindowId {
-            col_id,
-            row_id,
+            output_id,
+            input_id,
             layer_id,
         }
     }

@@ -28,7 +28,7 @@ impl Component for SparsifyBuffer {
     /// simply swap the current and next state when current state is Empty
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     ///
     /// use gcn_agg::accelerator::{sparsify_buffer::{sparsify_buffer, BufferStatus}};
     /// let mut output_buffer = sparsify_buffer::new();
@@ -69,11 +69,12 @@ impl SparsifyBuffer {
         }
     }
 
-    pub fn start_mlp(&mut self) {
+    pub fn start_mlp(&mut self, output_window: Rc<OutputWindow>) {
         assert_eq!(self.current_state, BufferStatus::Empty);
         self.current_state = BufferStatus::Writing;
+        self.current_window = Some(output_window);
     }
-    pub fn finished_writing(&mut self) {
+    pub fn finished_mlp(&mut self) {
         assert_eq!(self.current_state, BufferStatus::Writing);
         self.current_state = BufferStatus::WaitingToSparsify;
     }

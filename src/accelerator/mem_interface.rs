@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use log::debug;
 use ramulator_wrapper::RamulatorWrapper;
 
 use super::{component::Component, window_id::WindowId};
@@ -49,32 +50,75 @@ impl Component for MemInterface {
     /// 2. receive responses from memory
     /// when the recv queue is not full and self.mem is ret_available, receive the first response from memory,
     /// note that: need to delete the request from current_waiting_request and current_waiting_mem_request
+    /// ---
+    /// # Bug
+    ///
+    /// - should merge the same addr
     ///
     fn cycle(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(req) = self.send_queue.front_mut() {
-            while let Some(addr) = req.addr_vec.pop() {
-                if self.mem.available(addr, req.is_write) {
-                    self.mem.send(addr, req.is_write);
-                    self.current_waiting_request
-                        .entry(req.id.clone())
-                        .or_insert(HashSet::new())
-                        .insert(addr);
-                    self.current_waiting_mem_request
-                        .entry(addr)
-                        .or_insert(HashSet::new())
-                        .insert(req.id.clone());
-                } else {
-                    req.addr_vec.push(addr);
-                    break;
+            match req.is_write {
+                true => {
+                    while let Some(addr) = req.addr_vec.pop() {
+                        if self.mem.available(addr, req.is_write) {
+                            debug!("addr: {} ready to send!", addr);
+                            // fix bug here, should merge the same addr
+                            self.mem.send(addr, req.is_write);
+                        } else {
+                            debug!("addr: {} not ready to send!", addr);
+                            req.addr_vec.push(addr);
+                            break;
+                        }
+                    }
+                }
+                false => {
+                    while let Some(addr) = req.addr_vec.pop() {
+                        if addr % 64 != 0 {
+                            panic!("addr should be 64 aligned");
+                        }
+                        debug!("trying to send addr: {} of req: {:?}", addr, req.id);
+
+                        if self.current_waiting_mem_request.contains_key(&addr) {
+                            debug!("addr: {} is already in current_waiting_mem_request", addr);
+                            // the request is already in flight
+                            self.current_waiting_mem_request
+                                .get_mut(&addr)
+                                .unwrap()
+                                .insert(req.id.clone());
+                            self.current_waiting_request
+                                .entry(req.id.clone())
+                                .or_insert(HashSet::new())
+                                .insert(addr);
+                        } else if self.mem.available(addr, req.is_write) {
+                            debug!("addr: {} ready to send!", addr);
+                            // fix bug here, should merge the same addr
+
+                            self.current_waiting_request
+                                .entry(req.id.clone())
+                                .or_insert(HashSet::new())
+                                .insert(addr);
+                            self.current_waiting_mem_request
+                                .entry(addr)
+                                .or_insert(HashSet::new())
+                                .insert(req.id.clone());
+
+                            self.mem.send(addr, req.is_write);
+                        } else {
+                            req.addr_vec.push(addr);
+                            break;
+                        }
+                    }
                 }
             }
+
             if req.addr_vec.len() == 0 {
                 self.send_queue.pop_front();
             }
         }
 
         while self.mem.ret_available() && self.recv_queue.len() < self.recv_size {
-            let addr = self.mem.get();
+            let addr = self.mem.pop();
+            debug!("receive: addr: {:?}", addr);
             let id_list = self
                 .current_waiting_mem_request
                 .remove(&addr)
@@ -87,6 +131,7 @@ impl Component for MemInterface {
                 req.remove(&addr);
                 if req.len() == 0 {
                     self.current_waiting_request.remove(&id);
+                    debug!("all memory for id:{:?} is back, ready to send", id);
                     self.recv_queue.push_back(id);
                 }
             }
@@ -97,9 +142,9 @@ impl Component for MemInterface {
 }
 
 impl MemInterface {
-    pub fn new(send_size: usize, recv_size: usize) -> Self {
+    pub fn new(send_size: usize, recv_size: usize, config_name: &str) -> Self {
         MemInterface {
-            mem: RamulatorWrapper::new(),
+            mem: RamulatorWrapper::new(config_name),
             send_queue: VecDeque::new(),
             send_size,
             recv_queue: VecDeque::new(),
@@ -123,6 +168,10 @@ impl MemInterface {
     /// # Description
     /// * send a request to memory
     pub fn send(&mut self, id_: WindowId, addr_vec: Vec<u64>, is_write: bool) {
+        debug!(
+            "sending request: {:?},addr:{:?},is_write:{}",
+            id_, addr_vec, is_write
+        );
         self.send_queue
             .push_back(MemWindowIdust::new(addr_vec, id_, is_write));
     }
@@ -148,24 +197,33 @@ mod tests {
 
     #[test]
     fn test_mem_interface() -> Result<(), Box<dyn std::error::Error>> {
-        let mut mem_interface = super::MemInterface::new(1, 1);
+        simple_logger::init_with_level(log::Level::Warn).unwrap_or_default();
+        let mut mem_interface = super::MemInterface::new(10, 10, "test3_mem_stat.txt");
         assert_eq!(mem_interface.available(), true);
-        assert_eq!(mem_interface.receive().is_some(), false);
+        // assert_eq!(mem_interface.receive().is_some(), false);
         mem_interface.send(WindowId::new(1, 1, 1), vec![0], false);
-        assert_eq!(mem_interface.available(), false);
-        assert_eq!(mem_interface.receive().is_some(), false);
+        mem_interface.send(WindowId::new(1, 2, 1), vec![64, 512, 1024], false);
 
-        while !mem_interface.receive().is_some() {
+        assert_eq!(mem_interface.available(), true);
+        // assert_eq!(mem_interface.receive().is_some(), false);
+
+        while mem_interface.receive().is_none() {
             mem_interface.cycle()?;
         }
 
         assert_eq!(mem_interface.available(), true);
         assert_eq!(mem_interface.receive().is_some(), true);
 
-        let result = mem_interface.receive().expect("no response");
-        assert_eq!(*result, WindowId::new(1, 1, 1));
+        let result = mem_interface.receive_pop().expect("no response");
+        assert_eq!(result, WindowId::new(1, 1, 1));
+        while !mem_interface.receive().is_some() {
+            mem_interface.cycle()?;
+        }
+        let result = mem_interface.receive_pop().expect("no response");
+        assert_eq!(result, WindowId::new(1, 2, 1));
         assert_eq!(mem_interface.current_waiting_mem_request.is_empty(), true);
         assert_eq!(mem_interface.current_waiting_request.is_empty(), true);
+        assert!(mem_interface.receive().is_none());
         Ok(())
     }
 }

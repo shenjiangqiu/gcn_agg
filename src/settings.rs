@@ -1,4 +1,6 @@
 use config::{Config, ConfigError, File};
+use glob::glob;
+use log::debug;
 use serde::{Deserialize, Serialize};
 use std::string::String;
 
@@ -48,7 +50,17 @@ impl Settings {
     pub fn new(config_path: Vec<String>) -> Result<Self, ConfigError> {
         let mut s = Config::new();
         for i in config_path {
+            debug!("Loading config file: {}", i);
             s.merge(File::with_name(&i))?;
+        }
+        // merge all config files in configs/user_configs/
+        let user_files = glob("configs/user_configs/*.toml").unwrap().map(|x| {
+            debug!("Loading user config file: {:?}", x);
+            File::from(x.unwrap())
+        });
+
+        for i in user_files {
+            s.merge(i)?;
         }
 
         let result: Self = s.try_into()?;

@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // config_names append args
-    for arg in margs {
+    for arg in margs.into_iter().skip(1) {
         config_names.push(arg);
     }
 
@@ -102,7 +102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     stat.simulation_time = time_str;
 
     results.stats = Some(stat);
-    let current_time: String = Local::now().format("%Y-%m-%d_%H-%M-%S%.3f").to_string();
+    let current_time: String = Local::now().format("%Y-%m-%d-%H-%M-%S%.6f").to_string();
     let output_path = format!("output/{}.json", current_time);
 
     println!("{}", serde_json::to_string_pretty(&results)?);

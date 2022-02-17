@@ -13,7 +13,7 @@ use gcn_agg::{
 #[test]
 fn test_system() -> Result<(), Box<dyn std::error::Error>> {
     simple_logger::init_with_level(log::Level::Debug)?;
-    
+
     let start_time = std::time::Instant::now();
     let mut results = GcnAggResult::new();
 
@@ -67,7 +67,7 @@ fn test_system() -> Result<(), Box<dyn std::error::Error>> {
         input_buffer_size,
         agg_buffer_size,
         output_buffer_size,
-        gcn_hidden_size.len(),
+        node_features.len(),
         &gcn_hidden_size,
         systolic_rows,
         systolic_cols,
@@ -88,7 +88,7 @@ fn test_system() -> Result<(), Box<dyn std::error::Error>> {
     stat.simulation_time = time_str;
 
     results.stats = Some(stat);
-    let current_time: String = Local::now().format("%Y-%m-%d_%H-%M-%S%.3f").to_string();
+    let current_time: String = Local::now().format("%Y-%m-%d-%H-%M-%S%.6f").to_string();
     let output_path = format!("output/{}.json", current_time);
 
     println!("{}", serde_json::to_string_pretty(&results)?);

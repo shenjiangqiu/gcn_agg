@@ -1,9 +1,9 @@
 description = "the default config, you should add your own config to override some of these entries"
-features_paths = ["nodefeatures/test_1.feat", "nodefeatures/test_2.feat"]
+features_paths = ["nodefeatures/test_1.feat", "nodefeatures/test_2.feat", "nodefeatures/test_3.feat"]
 graph_path = "graphs/test.graph"
 [accelerator_settings]
 agg_buffer_size = 256
-gcn_hidden_size = [16]
+gcn_hidden_size = [16, 16]
 input_buffer_size = 256
 output_buffer_size = 256
 [accelerator_settings.aggregator_settings]

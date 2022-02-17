@@ -25,7 +25,7 @@ pub struct Aggregator {
     dense_width: usize,
 
     pub state: AggregatorState,
-    last_col_id: usize,
+    last_output_id: usize,
     current_task_id: Option<WindowId>,
     current_task_remaining_cycles: u64,
 }
@@ -66,7 +66,7 @@ impl Aggregator {
             dense_cores,
             dense_width,
             state: AggregatorState::Idle,
-            last_col_id: 0,
+            last_output_id: 0,
             current_task_id: None,
             current_task_remaining_cycles: 0,
         }
@@ -225,6 +225,10 @@ impl Aggregator {
         // for each round, need an extra cycle to load the data and send back the data
         cycles *= 3;
         cycles as u64
+    }
+
+    pub fn finished_aggregation(&mut self) {
+        self.state = AggregatorState::Idle;
     }
 }
 

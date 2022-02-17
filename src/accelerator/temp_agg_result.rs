@@ -11,8 +11,8 @@ impl TempAggResult {
             inner: vec![vec![]; total_nodes],
         }
     }
-    pub fn get_line(&self, row_id: usize) -> &Vec<usize> {
-        &self.inner[row_id]
+    pub fn get_line(&self, input_id: usize) -> &Vec<usize> {
+        &self.inner[input_id]
     }
     pub fn get_lines_range(&self, start: usize, end: usize) -> &[Vec<usize>] {
         &self.inner[start..end]

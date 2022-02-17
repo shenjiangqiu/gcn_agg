@@ -1,6 +1,9 @@
+use log::debug;
+
 use super::window_id::WindowId;
 use crate::{graph::Graph, node_features::NodeFeatures};
-use std::{cmp::min, collections::btree_set::Range, rc::Rc};
+use core::panic;
+use std::{cmp, collections::btree_set::Range, rc::Rc};
 
 #[derive(Debug, Clone)]
 pub struct InputWindow<'a> {
@@ -127,8 +130,8 @@ impl<'a> OutputWindowIterator<'a> {
             current_start_output_index: 0,
             task_id: WindowId {
                 layer_id: layer,
-                col_id: 0,
-                row_id: 0,
+                output_id: 0,
+                input_id: 0,
             },
             gcn_hidden_size,
             final_layer,
@@ -142,13 +145,44 @@ impl<'a> Iterator for OutputWindowIterator<'a> {
         if self.current_start_output_index >= self.graph.get_num_node() {
             return None;
         }
-        let output_size = self.agg_buffer_size / (self.graph.get_feature_size() * 4);
-        let end_output_index = min(
+        // let output_size = (self.agg_buffer_size / 2) / (self.graph.get_feature_size() * 4);
+        // fix bug here, the output feature size is gcn_hidden layer size!
+        // fix bug again, the aggregated result size is unknown! we need to have enought space to store the aggregated result!
+        // let output_size = self.gcn_hidden_size[self.task_id.layer_id] * 4;
+        // let output_size = (self.agg_buffer_size / 2) / output_size;
+        // fix another bug!, when the layer is not zero, the outout size is the gcn_hidden layer size!
+        let output_size = match self.task_id.layer_id {
+            0 => {
+                debug!(
+                    "it's the first layer, the agg buffer is:{}, the node size is:{}",
+                    self.agg_buffer_size / 2,
+                    self.graph.get_feature_size() * 4
+                );
+                (self.agg_buffer_size / 2) / (self.graph.get_feature_size() * 4)
+            }
+            _ => {
+                debug!(
+                    "it's not the first layer, the agg buffer is:{}, the gcn hidden size is:{}",
+                    self.agg_buffer_size / 2,
+                    self.gcn_hidden_size[self.task_id.layer_id - 1]
+                );
+                self.gcn_hidden_size[self.task_id.layer_id - 1]
+            }
+        };
+
+        if output_size == 0 {
+            panic!(
+                "Output size is 0,agg_buffer_size:{},feature_size:{}",
+                self.agg_buffer_size / 2,
+                self.graph.get_feature_size() * 4
+            );
+        }
+        let end_output_index = cmp::min(
             self.current_start_output_index + output_size,
             self.graph.get_num_node(),
         );
         let final_iter = {
-            if self.final_layer && end_output_index >= self.graph.get_num_node() {
+            if end_output_index >= self.graph.get_num_node() {
                 true
             } else {
                 false
@@ -166,7 +200,7 @@ impl<'a> Iterator for OutputWindowIterator<'a> {
             final_iter,
             self.final_layer,
         );
-        self.task_id.col_id += 1;
+        self.task_id.output_id += 1;
         self.current_start_output_index = end_output_index;
         Some(intput_iter)
     }
@@ -244,20 +278,38 @@ impl<'a> Iterator for InputWindowIterator<'a> {
             }
             // build the window
             let mut x_size = 0;
-            let mut x_len = 1;
-            while x_size < self.input_buffer_size
+            // num of nodes in the window
+            let mut x_len = 0;
+            while x_size < self.input_buffer_size / 2
                 && self.current_window_start_input_index + x_len < self.graph.get_num_node()
             {
                 let new_size = self
                     .node_features
-                    .get_features(self.current_window_start_input_index + x_len - 1)
+                    .get_features(self.current_window_start_input_index + x_len)
                     .len()
                     * 4;
-                if x_size + new_size >= self.input_buffer_size {
+                debug!(
+                    "old size: {},new size: {}, max size: {}",
+                    x_size,
+                    new_size,
+                    self.input_buffer_size / 2
+                );
+                // fix bug here, it's ok to equal!
+                if x_size + new_size > self.input_buffer_size / 2 {
+                    debug!(
+                        "break!xsize: {}, new size: {}, max size: {}",
+                        x_size,
+                        new_size,
+                        self.input_buffer_size / 2
+                    );
                     break;
                 }
                 x_size += new_size;
                 x_len += 1;
+            }
+            debug!("the x_len is {}", x_len);
+            if x_len == 0 {
+                panic!("x_len is 0, the while input buffer cannot add one more node");
             }
             // shrink the window
             self.current_window_end_input_index = self.current_window_start_input_index + x_len;
@@ -271,6 +323,7 @@ impl<'a> Iterator for InputWindowIterator<'a> {
                 )
                 .expect("is_row_range_empty should always return Some")
             {
+                debug!("shrink the window!");
                 self.current_window_end_input_index -= 1;
             }
 
@@ -298,7 +351,7 @@ impl<'a> Iterator for InputWindowIterator<'a> {
 
             let output_node_dim = match self.final_layer {
                 true => 1,
-                false => *self.gcn_hidden_size.get(self.end_output_index).unwrap(),
+                false => *self.gcn_hidden_size.get(self.task_id.layer_id).unwrap(),
             };
             let mut next_start_row = self.current_window_start_input_index + x_len;
             // test if it't the last row: all the rows after end_input_index should be empty
@@ -345,7 +398,7 @@ impl<'a> Iterator for InputWindowIterator<'a> {
             // prepare the next start x and start y
             self.current_window_start_input_index = next_start_row;
 
-            self.task_id.row_id += 1;
+            self.task_id.input_id += 1;
             return Some(current_window);
         }
     }
@@ -355,73 +408,80 @@ impl<'a> Iterator for InputWindowIterator<'a> {
 mod test {
     use std::{fs::File, io::Write};
 
+    use log::debug;
+
     use super::*;
     #[test]
     fn sliding_window_test() {
-        let graph_name = "test_data/graph.txt";
+        simple_logger::init_with_level(log::Level::Warn).unwrap_or_default();
+
+        let graph_name = "test_data/graph1.txt";
         let features_name = "test_data/features.txt";
-        let data = "f 3\n0 1 2\n1 2 0\n2 0 1\nend\n";
-        let mut file = File::create("test_data/graph.txt").unwrap();
+        let data = "f 2\n0 1 2\n1 2 0\n2 0 1\nend\n";
+        let mut file = File::create(graph_name).unwrap();
         file.write_all(data.as_bytes()).unwrap();
         let data = "0 0 1 0 1 0\n1 0 0 1 1 1\n1 1 0 0 0 1\n";
         let mut file = File::create("test_data/features.txt").unwrap();
         file.write_all(data.as_bytes()).unwrap();
+        debug!("graph:{}", "f 3\n0 1 2\n1 2 0\n2 0 1\nend\n");
+        debug!("feature:{}", "0 0 1 0 1 0\n1 0 0 1 1 1\n1 1 0 0 0 1\n");
 
         let graph = Graph::new(graph_name).unwrap();
         let node_features = NodeFeatures::new(features_name).unwrap();
-        let gcn_hidden_size = vec![2, 2];
+        let gcn_hidden_size = vec![2];
         let output_window_iter =
-            OutputWindowIterator::new(&graph, &node_features, 20, 20, 0, &gcn_hidden_size, false);
+            OutputWindowIterator::new(&graph, &node_features, 32, 32, 0, &gcn_hidden_size, false);
         for i in output_window_iter {
-            println!("{:?}", i);
+            debug!("{:?}\n", i);
             for j in i {
-                println!("{:?}", j);
+                debug!("{:?}\n", j);
             }
         }
     }
     #[test]
-    fn sliding_window_test_multi() {
-        // let graph_name = "test_data/graph.txt";
-        // let features_name = "test_data/features.txt";
-        // let data = "f 2\n1 2\n2 3 4\n0 1 4\n0 2 4\n2 4\nend\n";
-        // let mut file = File::create("test_data/graph.txt").unwrap();
-        // file.write_all(data.as_bytes()).unwrap();
-        // let data = "0 1 1 0 1 1\n1 0 0 1 1 1\n1 1 1 0 0 1\n1 1 1 0 0 1\n1 1 1 0 0 1\n";
-        // let mut file = File::create("test_data/features.txt").unwrap();
-        // file.write_all(data.as_bytes()).unwrap();
+    fn sliding_window_test_multi() -> Result<(), Box<dyn std::error::Error>> {
+        simple_logger::init_with_level(log::Level::Warn).unwrap_or_default();
 
-        // let  graph = Graph::from(graph_name);
-        // let node_features = NodeFeatures::from(features_name);
+        let graph_name = "test_data/graph2.txt";
+        let data = "f 6\n1 2\n2 3 4\n0 1 4\n0 2 4\n2 4\nend\n";
+        let mut file = File::create(graph_name).unwrap();
+        file.write_all(data.as_bytes()).unwrap();
+        let feature1 = "1 1 0 0 1 1\n1 0 0 1 1 1\n1 1 1 0 0 1\n1 1 1 0 0 1\n1 1 1 0 0 1\n";
+        let mut file = File::create("test_data/features1.txt").unwrap();
+        file.write_all(feature1.as_bytes()).unwrap();
+        let feature2 = "1 1\n1 1 \n1 1\n1 1\n1 1\n";
+        let mut file = File::create("test_data/features2.txt").unwrap();
+        file.write_all(feature2.as_bytes()).unwrap();
 
-        // let output_window_iter =
-        //     OutputWindowIterator::new(&graph, &node_features, 16, 32, 0, &vec![2, 2]);
+        debug!("graph:\n{}", "f 2\n1 2\n2 3 4\n0 1 4\n0 2 4\n2 4\nend\n");
+        debug!("feature1:\n{}", feature1);
+        debug!("feature2:\n{}", feature2);
 
-        // let correct_ranges = vec![
-        //     (vec![1usize, 2], vec![2usize]),
-        //     (vec![], vec![3, 4]),
-        //     (vec![0, 1], vec![0]),
-        //     (vec![], vec![2]),
-        //     (vec![4], vec![4]),
-        //     (vec![2], vec![4]),
-        // ];
-        // let correct_task_id = vec![0usize, 1, 0, 1, 2, 0, 1];
-        // let correcnt_start_end = vec![
-        //     (1usize, 0, 3, 2),
-        //     (3, 0, 5, 2),
-        //     (0, 2, 2, 4),
-        //     (2, 2, 3, 4),
-        //     (4, 2, 5, 4),
-        //     (2, 4, 3, 5),
-        //     (4, 4, 5, 5),
-        // ];
-        // let mut result_=itertools::izip!(&correct_ranges, &correct_task_id, &correcnt_start_end);
-        // for i in output_window_iter {
-        //     for j in i {
-        //         let (range, task_id, start_end) = result_.next().unwrap();
-        //         assert_eq!((j.tasks[0].clone().collect(),j.tasks[1].collect()), *range);
-        //         assert_eq!(j.task_id, *task_id);
-        //         assert_eq!(j.start_end, *start_end);
-        //     }
-        // }
+        let graph = Graph::new(graph_name)?;
+        let node_features1 = NodeFeatures::new("test_data/features1.txt")?;
+        let node_features2 = NodeFeatures::new("test_data/features2.txt")?;
+        let gcn_hidden_size = vec![2];
+        // max input num=2, max output num=1
+        let output_window_iter =
+            OutputWindowIterator::new(&graph, &node_features1, 48, 32, 0, &gcn_hidden_size, false);
+        let mut total_windows = 0;
+        for i in output_window_iter {
+            debug!("{:?}\n\n", i);
+            for j in i {
+                total_windows += 1;
+                debug!("{:?}\n\n", j);
+            }
+        }
+        let output_window_iter =
+            OutputWindowIterator::new(&graph, &node_features2, 48, 32, 1, &gcn_hidden_size, true);
+        for i in output_window_iter {
+            debug!("{:?}\n\n", i);
+            for j in i {
+                total_windows += 1;
+                debug!("{:?}\n\n", j);
+            }
+        }
+        assert_eq!(total_windows, 20);
+        Ok(())
     }
 }

@@ -24,7 +24,7 @@ impl Component for OutputBuffer {
     /// simply swap the current and next state when current state is Empty
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     ///
     /// use gcn_agg::accelerator::{sparsify_buffer::{sparsify_buffer, BufferStatus}};
     /// let mut OutputBuffer = sparsify_buffer::new();
@@ -70,7 +70,7 @@ impl OutputBuffer {
         self.current_state = BufferStatus::Writing;
         self.current_window = Some(window);
     }
-    pub fn finished_writing(&mut self) {
+    pub fn finished_sparsify(&mut self) {
         assert_eq!(self.current_state, BufferStatus::Writing);
         self.current_state = BufferStatus::WaitingToWriteBack;
     }

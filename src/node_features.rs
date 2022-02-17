@@ -25,7 +25,7 @@ impl NodeFeatures {
     ///
     /// the result node feature will be stored as csr format
     /// # example
-    /// ```
+    /// ```ignore
     /// use std::fs::File;
     /// use std::io::{Read,Write};
     /// use gcn_agg::node_features::NodeFeatures;

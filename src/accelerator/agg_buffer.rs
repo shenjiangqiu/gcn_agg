@@ -58,7 +58,7 @@ impl Component for AggBuffer {
     /// simply swap the current and next state when current state is Empty
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// use gcn_agg::accelerator::{agg_buffer::{AggBuffer, BufferStatus}};
     /// let mut agg_buffer = AggBuffer::new();
     /// agg_buffer.start_writing(1);
@@ -120,6 +120,12 @@ impl AggBuffer {
             panic!("finished_mlp: current state is not mlp");
         }
         self.next_state = BufferStatus::Empty;
+        // fix bug here, clear the temp result after mlp
+        self.next_temp_result
+            .as_mut()
+            .unwrap()
+            .iter_mut()
+            .for_each(|x| x.clear());
     }
 
     pub fn finish_writing(&mut self) {
@@ -148,5 +154,9 @@ impl AggBuffer {
     }
     pub fn get_next_state(&self) -> &BufferStatus {
         &self.next_state
+    }
+
+    pub fn finished_aggregation(&mut self) {
+        self.current_state = BufferStatus::WaitingToMlp;
     }
 }

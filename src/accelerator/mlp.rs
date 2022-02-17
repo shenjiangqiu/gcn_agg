@@ -68,7 +68,10 @@ impl Mlp {
     ) {
         match output_results {
             Some(_output_results) => {
-                todo!();
+                // the sparse mlp
+                self.state = MlpState::Working;
+                self.remaining_cycle = 10;
+                // TODO: calculate the number of cycles needed to finish the mlp
             }
             None => {
                 self.state = MlpState::Working;
