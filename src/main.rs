@@ -1,10 +1,10 @@
 use chrono::Local;
-use gcn_agg::accelerator::System;
-use gcn_agg::gcn_result::GcnAggResult;
-use gcn_agg::settings::{
-    AcceleratorSettings, AggregatorSettings, MlpSettings, Settings, SparsifierSettings,
+use gcn_agg::{
+    settings::{
+        AcceleratorSettings, AggregatorSettings, MlpSettings, Settings, SparsifierSettings,
+    },
+    GcnAggResult, Graph, NodeFeatures, System,
 };
-use gcn_agg::{graph::Graph, node_features::NodeFeatures};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     simple_logger::init_with_level(log::Level::Warn)?;
@@ -108,5 +108,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("{}", serde_json::to_string_pretty(&results)?);
     // write json of results to output_path
     std::fs::write(output_path, serde_json::to_string_pretty(&results)?)?;
-    return Ok(());
+    Ok(())
 }

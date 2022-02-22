@@ -2,7 +2,7 @@
 //! - this mod contains the settings of the gcn accelerator.
 //!
 use config::{Config, File};
-use glob::{glob, GlobError};
+use glob::glob;
 use itertools::Itertools;
 
 use serde::{Deserialize, Serialize};
@@ -66,26 +66,22 @@ impl Settings {
     /// # Return
     /// - `Result<Settings, ConfigError>`: the settings of gcn accelerator.
     pub fn new(config_path: Vec<String>) -> Result<Self, Box<dyn Error>> {
-        let input_files = config_path
-            .iter()
-            .map(|x| File::with_name(x))
-            .collect::<Vec<_>>();
+        let input_files = config_path.iter().map(|x| File::with_name(x)).collect_vec();
         let default_files: Vec<_> = glob("configs/user_configs/*.toml")?
-            .map(|x| Result::<_, GlobError>::Ok(File::from(x?)))
+            .map_ok(|x| File::from(x))
             .try_collect()?;
 
-        let s = Config::builder()
+        let result: Settings = Config::builder()
             .add_source(input_files)
             .add_source(default_files)
-            .build()?;
+            .build()?
+            .try_deserialize()?;
 
-        let result: Self = s.try_deserialize()?;
-        if result.features_paths.len() == result.accelerator_settings.gcn_hidden_size.len() + 1 {
-            Ok(result)
-        } else {
-            Err(
-                "Number of features files does not match the number of hidden layers,\
-                 feature path should be one more than the number of hidden layers(including the input layer)".into())
+        match result.features_paths.len() - result.accelerator_settings.gcn_hidden_size.len() {
+            1 => Ok(result),
+            _ => Err(
+                "the number of features paths is not equal to the number of gcn hidden size".into(),
+            ),
         }
     }
 }
