@@ -1,9 +1,15 @@
-use config::{Config, ConfigError, File};
-use glob::glob;
-use log::debug;
-use serde::{Deserialize, Serialize};
-use std::string::String;
+//! # the settings of the gcn accelerator
+//! - this mod contains the settings of the gcn accelerator.
+//!
+use config::{Config, File};
+use glob::{glob, GlobError};
+use itertools::Itertools;
 
+use serde::{Deserialize, Serialize};
+use std::{error::Error, string::String};
+
+/// # Description
+/// - struct for recording the settings of gcn accelerator.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub description: String,
@@ -12,6 +18,8 @@ pub struct Settings {
     pub accelerator_settings: AcceleratorSettings,
 }
 
+/// # Description
+/// - struct for recording the settings of gcn accelerator.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcceleratorSettings {
     pub input_buffer_size: usize,
@@ -23,6 +31,8 @@ pub struct AcceleratorSettings {
     pub sparsifier_settings: SparsifierSettings,
 }
 
+/// # Description
+/// - struct for recording the settings of aggregator.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AggregatorSettings {
     pub sparse_cores: usize,
@@ -30,6 +40,8 @@ pub struct AggregatorSettings {
     pub dense_cores: usize,
     pub dense_width: usize,
 }
+/// # Description
+/// - struct for recording the settings of mlp.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MlpSettings {
     pub systolic_rows: usize,
@@ -37,39 +49,43 @@ pub struct MlpSettings {
     pub mlp_sparse_cores: usize,
 }
 
+/// # Description
+/// - struct for recording the settings of sparsifier.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SparsifierSettings {
     pub sparsifier_cores: usize,
 }
 
-pub struct StringWrapper {
-    pub string: String,
-}
-
 impl Settings {
-    pub fn new(config_path: Vec<String>) -> Result<Self, ConfigError> {
-        let mut s = Config::new();
-        for i in config_path {
-            debug!("Loading config file: {}", i);
-            s.merge(File::with_name(&i))?;
-        }
-        // merge all config files in configs/user_configs/
-        let user_files = glob("configs/user_configs/*.toml").unwrap().map(|x| {
-            debug!("Loading user config file: {:?}", x);
-            File::from(x.unwrap())
-        });
+    /// # Description
+    /// - create the settings of gcn accelerator.
+    /// - will read all configs provided in the config_path.
+    /// - the configs/user_configs/*.toml will also be read.
+    /// # Arguments
+    /// - `config_path`: the vec of paths of the config file with surfix `.toml`.
+    /// # Return
+    /// - `Result<Settings, ConfigError>`: the settings of gcn accelerator.
+    pub fn new(config_path: Vec<String>) -> Result<Self, Box<dyn Error>> {
+        let input_files = config_path
+            .iter()
+            .map(|x| File::with_name(x))
+            .collect::<Vec<_>>();
+        let default_files: Vec<_> = glob("configs/user_configs/*.toml")?
+            .map(|x| Result::<_, GlobError>::Ok(File::from(x?)))
+            .try_collect()?;
 
-        for i in user_files {
-            s.merge(i)?;
-        }
+        let s = Config::builder()
+            .add_source(input_files)
+            .add_source(default_files)
+            .build()?;
 
-        let result: Self = s.try_into()?;
+        let result: Self = s.try_deserialize()?;
         if result.features_paths.len() == result.accelerator_settings.gcn_hidden_size.len() + 1 {
             Ok(result)
         } else {
-            Err(ConfigError::Message(String::from(
-                "Number of features files does not match the number of hidden layers, feature path should be one more than the number of hidden layers(including the input layer)",
-            )))
+            Err(
+                "Number of features files does not match the number of hidden layers,\
+                 feature path should be one more than the number of hidden layers(including the input layer)".into())
         }
     }
 }

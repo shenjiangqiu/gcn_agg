@@ -1,6 +1,13 @@
+//! # mod gcn result
+//! - this mod contains structs for recording the result of gcn simulation.
 use crate::settings::Settings;
 use serde::Serialize;
-
+///
+/// # Description
+/// - struct for recording the result of gcn simulation.
+/// # Fields
+/// - settings: the settings of gcn simulation.`gcn_agg::settings::Settings`
+/// - stats: the statistics
 #[derive(Debug, Serialize)]
 pub struct GcnAggResult {
     pub settings: Option<Settings>,
@@ -15,7 +22,11 @@ impl GcnAggResult {
         }
     }
 }
-
+/// # Description
+/// - struct for recording the statistics of gcn simulation.
+/// # Fields
+/// - simulation_time: the simulation time
+/// - cycle: the number of cycles
 #[derive(Debug, Serialize)]
 pub struct GcnStatistics {
     pub cycle: u64,
