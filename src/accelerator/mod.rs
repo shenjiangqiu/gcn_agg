@@ -11,16 +11,17 @@
 //! 
 
 
-pub mod aggregator;
-pub mod system;
-pub mod mem_interface;
-pub mod input_buffer;
-pub mod sparsify_buffer;
-pub mod agg_buffer;
-pub mod sliding_window;
-pub mod window_id;
-pub mod mlp;
-pub mod component;
-pub mod temp_agg_result;
-pub mod sparsifier;
-pub mod output_buffer;
+pub(self) mod aggregator;
+pub(self) mod system;
+pub(self) mod mem_interface;
+pub(self) mod input_buffer;
+pub(self) mod sparsify_buffer;
+pub(self) mod agg_buffer;
+pub(self) mod sliding_window;
+pub(self) mod window_id;
+pub(self) mod mlp;
+pub(self) mod component;
+pub(self) mod temp_agg_result;
+pub(self) mod sparsifier;
+pub(self) mod output_buffer;
+pub use system::System;

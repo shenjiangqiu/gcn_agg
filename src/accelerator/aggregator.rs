@@ -215,6 +215,7 @@ impl Aggregator {
     }
 
     /// # Description
+    #[allow(dead_code)]
     pub fn add_dense(&self, features_size: usize, num_features: usize) -> u64 {
         let mut cycles = 0;
         cycles += features_size * num_features;

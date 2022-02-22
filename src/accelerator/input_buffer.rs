@@ -12,10 +12,10 @@ pub enum BufferStatus {
 }
 #[derive(Debug)]
 pub struct InputBuffer<'a> {
-    pub current_state: BufferStatus,
-    pub next_state: BufferStatus,
-    pub current_window: Option<InputWindow<'a>>,
-    pub next_window: Option<InputWindow<'a>>,
+    current_state: BufferStatus,
+    next_state: BufferStatus,
+    current_window: Option<InputWindow<'a>>,
+    next_window: Option<InputWindow<'a>>,
 }
 impl Component for InputBuffer<'_> {
     /// # Description
@@ -156,76 +156,76 @@ impl<'a> InputBuffer<'a> {
         self.current_window = Some(window);
     }
 
-    pub fn is_current_empty(&self) -> bool {
-        match self.current_state {
-            BufferStatus::Empty => true,
-            _ => false,
-        }
-    }
-    pub fn is_next_empty(&self) -> bool {
-        match self.next_state {
-            BufferStatus::Empty => true,
-            _ => false,
-        }
-    }
+    // pub fn is_current_empty(&self) -> bool {
+    //     match self.current_state {
+    //         BufferStatus::Empty => true,
+    //         _ => false,
+    //     }
+    // }
+    // pub fn is_next_empty(&self) -> bool {
+    //     match self.next_state {
+    //         BufferStatus::Empty => true,
+    //         _ => false,
+    //     }
+    // }
 
-    pub fn is_current_ready(&self) -> bool {
-        match self.current_state {
-            BufferStatus::Ready => true,
-            _ => false,
-        }
-    }
+    // pub fn is_current_ready(&self) -> bool {
+    //     match self.current_state {
+    //         BufferStatus::Ready => true,
+    //         _ => false,
+    //     }
+    // }
 
-    pub fn is_next_ready(&self) -> bool {
-        match self.next_state {
-            BufferStatus::Ready => true,
-            _ => false,
-        }
-    }
+    // pub fn is_next_ready(&self) -> bool {
+    //     match self.next_state {
+    //         BufferStatus::Ready => true,
+    //         _ => false,
+    //     }
+    // }
 
-    pub fn is_current_loading(&self) -> bool {
-        match self.current_state {
-            BufferStatus::Loading => true,
-            _ => false,
-        }
-    }
+    // pub fn is_current_loading(&self) -> bool {
+    //     match self.current_state {
+    //         BufferStatus::Loading => true,
+    //         _ => false,
+    //     }
+    // }
 
-    pub fn is_next_loading(&self) -> bool {
-        match self.next_state {
-            BufferStatus::Loading => true,
-            _ => false,
-        }
-    }
+    // pub fn is_next_loading(&self) -> bool {
+    //     match self.next_state {
+    //         BufferStatus::Loading => true,
+    //         _ => false,
+    //     }
+    // }
 
-    pub fn is_current_waiting_to_load(&self) -> bool {
-        match self.current_state {
-            BufferStatus::WaitingToLoad => true,
-            _ => false,
-        }
-    }
+    // pub fn is_current_waiting_to_load(&self) -> bool {
+    //     match self.current_state {
+    //         BufferStatus::WaitingToLoad => true,
+    //         _ => false,
+    //     }
+    // }
 
-    pub fn is_next_waiting_to_load(&self) -> bool {
-        match self.next_state {
-            BufferStatus::WaitingToLoad => true,
-            _ => false,
-        }
-    }
+    // pub fn is_next_waiting_to_load(&self) -> bool {
+    //     match self.next_state {
+    //         BufferStatus::WaitingToLoad => true,
+    //         _ => false,
+    //     }
+    // }
 
-    pub fn get_current_id(&self) -> Option<&WindowId> {
-        match &self.current_window {
-            Some(InputWindow { task_id: id, .. }) => Some(id),
-            None => None,
-        }
-    }
+    // pub fn get_current_id(&self) -> Option<&WindowId> {
+    //     match &self.current_window {
+    //         Some(InputWindow { task_id: id, .. }) => Some(id),
+    //         None => None,
+    //     }
+    // }
 
-    pub fn get_next_id(&self) -> Option<&WindowId> {
-        match self.next_window {
-            Some(InputWindow {
-                task_id: ref id, ..
-            }) => Some(id),
-            None => None,
-        }
-    }
+    // pub fn get_next_id(&self) -> Option<&WindowId> {
+    //     match self.next_window {
+    //         Some(InputWindow {
+    //             task_id: ref id, ..
+    //         }) => Some(id),
+    //         None => None,
+    //     }
+    // }
 
     pub fn get_current_window(&self) -> Option<&InputWindow<'a>> {
         match self.current_window {
@@ -249,21 +249,24 @@ impl<'a> InputBuffer<'a> {
         &self.next_state
     }
 
-    pub fn get_current_layer(&self) -> Option<usize> {
-        match &self.current_window {
-            Some(InputWindow { task_id, .. }) => Some(task_id.layer_id),
-            None => None,
-        }
-    }
+    // pub fn get_current_layer(&self) -> Option<usize> {
+    //     match &self.current_window {
+    //         Some(InputWindow { task_id, .. }) => Some(task_id.layer_id),
+    //         None => None,
+    //     }
+    // }
 
-    pub fn get_next_layer(&self) -> Option<usize> {
-        match &self.next_window {
-            Some(InputWindow { task_id, .. }) => Some(task_id.layer_id),
-            None => None,
-        }
-    }
+    // pub fn get_next_layer(&self) -> Option<usize> {
+    //     match &self.next_window {
+    //         Some(InputWindow { task_id, .. }) => Some(task_id.layer_id),
+    //         None => None,
+    //     }
+    // }
 
     pub fn finished_aggregation(&mut self) {
         self.current_state = BufferStatus::Empty;
     }
-}
+    pub(super) fn start_aggragating(&mut self) {
+        self.current_state = BufferStatus::Reading;
+    }
+ }

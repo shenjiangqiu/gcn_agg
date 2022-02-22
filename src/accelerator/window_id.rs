@@ -7,6 +7,7 @@ pub struct WindowId {
     pub layer_id: usize,
 }
 impl WindowId {
+    #[allow(unused)]
     pub fn new(output_id: usize, input_id: usize, layer_id: usize) -> Self {
         WindowId {
             output_id,

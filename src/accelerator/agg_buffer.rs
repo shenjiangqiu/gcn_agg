@@ -31,18 +31,18 @@ pub enum BufferStatus {
 /// ```
 #[derive(Debug)]
 pub struct AggBuffer {
-    pub current_state: BufferStatus,
-    pub next_state: BufferStatus,
-    pub current_window: Option<Rc<OutputWindow>>,
-    pub next_window: Option<Rc<OutputWindow>>,
+    current_state: BufferStatus,
+    next_state: BufferStatus,
+    current_window: Option<Rc<OutputWindow>>,
+    next_window: Option<Rc<OutputWindow>>,
 
     // the temp result for the aggregation, when the aggregation result is finished, empty those temp result
-    pub current_temp_result: Option<TempAggResult>,
-    pub next_temp_result: Option<TempAggResult>,
+    current_temp_result: Option<TempAggResult>,
+    next_temp_result: Option<TempAggResult>,
 }
 
 impl AggBuffer {
-    pub fn new(num_nodes: usize) -> Self {
+    pub(super) fn new(num_nodes: usize) -> Self {
         AggBuffer {
             current_state: BufferStatus::Empty,
             next_state: BufferStatus::Empty,
@@ -98,24 +98,18 @@ impl AggBuffer {
     /// - don't mess up!
     /// ---
     /// ## ........by sjq
-    pub fn add_task(&mut self, window: Rc<OutputWindow>) {
+    pub(super) fn add_task(&mut self, window: Rc<OutputWindow>) {
         self.current_window = Some(window);
         self.current_state = BufferStatus::Writing;
     }
 
-    pub fn finished_writing(&mut self) {
-        if !matches!(self.current_state, BufferStatus::Writing) {
-            panic!("finished_writing: current state is not writing");
-        }
-        self.current_state = BufferStatus::WaitingToMlp;
-    }
-    pub fn start_mlp(&mut self) {
+    pub(super) fn start_mlp(&mut self) {
         if !matches!(self.next_state, BufferStatus::WaitingToMlp) {
             panic!("start_mlp: current state is not waiting to mlp");
         }
         self.next_state = BufferStatus::Mlp;
     }
-    pub fn finished_mlp(&mut self) {
+    pub(super) fn finished_mlp(&mut self) {
         if !matches!(self.next_state, BufferStatus::Mlp) {
             panic!("finished_mlp: current state is not mlp");
         }
@@ -128,35 +122,35 @@ impl AggBuffer {
             .for_each(|x| x.clear());
     }
 
-    pub fn finish_writing(&mut self) {
-        self.current_state = BufferStatus::WaitingToMlp;
-    }
-    pub fn start_reading(&mut self) {
-        self.next_state = BufferStatus::Mlp;
-    }
-    pub fn finish_reading(&mut self) {
-        self.next_state = BufferStatus::Empty;
-    }
-    pub fn get_current_window(&self) -> &Rc<OutputWindow> {
+    #[allow(dead_code)]
+    pub(super) fn get_current_window(&self) -> &Rc<OutputWindow> {
         &self
             .current_window
             .as_ref()
             .expect(format!("window should not be None!!").as_str())
     }
-    pub fn get_next_window(&self) -> &Rc<OutputWindow> {
+
+    pub(super) fn get_next_window(&self) -> &Rc<OutputWindow> {
         &self
             .next_window
             .as_ref()
             .expect(format!("window should not be None!!").as_str())
     }
-    pub fn get_current_state(&self) -> &BufferStatus {
+    pub(super) fn get_current_state(&self) -> &BufferStatus {
         &self.current_state
     }
-    pub fn get_next_state(&self) -> &BufferStatus {
+    pub(super) fn get_next_state(&self) -> &BufferStatus {
         &self.next_state
     }
 
-    pub fn finished_aggregation(&mut self) {
+    pub(super) fn finished_aggregation(&mut self) {
         self.current_state = BufferStatus::WaitingToMlp;
+    }
+
+    pub(super) fn get_current_temp_result_mut(&mut self) -> &mut Option<TempAggResult> {
+        &mut self.current_temp_result
+    }
+    pub(super) fn get_next_temp_result(&self) -> &Option<TempAggResult> {
+        &self.next_temp_result
     }
 }

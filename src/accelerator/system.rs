@@ -545,7 +545,7 @@ impl<'a> System<'a> {
         match (
             self.input_buffer.get_current_state(),
             self.aggregator.get_state(),
-            &self.agg_buffer.current_state,
+            self.agg_buffer.get_current_state(),
         ) {
             (
                 input_buffer::BufferStatus::Ready,
@@ -566,9 +566,9 @@ impl<'a> System<'a> {
                 self.aggregator.add_task(
                     current_window,
                     self.node_features.get(window_layer).unwrap(),
-                    &mut self.agg_buffer.current_temp_result,
+                    self.agg_buffer.get_current_temp_result_mut(),
                 );
-                self.input_buffer.current_state = input_buffer::BufferStatus::Reading;
+                self.input_buffer.start_aggragating();
                 return Ok(true);
             }
             _ => {}
@@ -605,7 +605,7 @@ impl<'a> System<'a> {
         //
         match (
             &self.agg_buffer.get_next_state(),
-            &self.mlp.state,
+            self.mlp.get_state(),
             &self.sparsify_buffer.current_state,
         ) {
             (
@@ -617,7 +617,7 @@ impl<'a> System<'a> {
                 let current_window = self.agg_buffer.get_next_window();
                 debug!("start the mlp, window: {:?}", &current_window);
                 self.mlp
-                    .start_mlp(current_window, &self.agg_buffer.next_temp_result);
+                    .start_mlp(current_window, self.agg_buffer.get_next_temp_result());
                 self.sparsify_buffer.start_mlp(current_window.clone());
                 self.agg_buffer.start_mlp();
 
@@ -630,10 +630,10 @@ impl<'a> System<'a> {
 
     fn handle_finish_mlp(&mut self) -> Result<bool, Box<dyn std::error::Error>> {
         // test if the mlp is finished
-        match self.mlp.state {
+        match self.mlp.get_state() {
             mlp::MlpState::Finished => {
                 // 1. make the mlp idle
-                self.mlp.state = mlp::MlpState::Idle;
+                self.mlp.finished_mlp();
                 // 2. set the output buffer to empty
                 self.sparsify_buffer.finished_mlp();
                 let window = self.agg_buffer.get_next_window();

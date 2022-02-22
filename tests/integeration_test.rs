@@ -1,7 +1,7 @@
 mod common;
 use chrono::Local;
 use gcn_agg::{
-    accelerator::system::System,
+    accelerator::System,
     gcn_result::GcnAggResult,
     graph::Graph,
     node_features::NodeFeatures,

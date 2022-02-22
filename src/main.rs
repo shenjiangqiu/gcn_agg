@@ -1,5 +1,5 @@
 use chrono::Local;
-use gcn_agg::accelerator::system::System;
+use gcn_agg::accelerator::System;
 use gcn_agg::gcn_result::GcnAggResult;
 use gcn_agg::settings::{
     AcceleratorSettings, AggregatorSettings, MlpSettings, Settings, SparsifierSettings,

@@ -63,7 +63,7 @@ impl OutputWindow {
 }
 
 impl<'a> InputWindow<'a> {
-    pub fn new(
+    pub(super) fn new(
         task_id: WindowId,
         tasks: Rc<Vec<Range<'a, usize>>>,
         start_output_index: usize,
@@ -84,19 +84,21 @@ impl<'a> InputWindow<'a> {
             is_last_row,
         }
     }
-    pub fn get_task_id(&self) -> &WindowId {
+    pub(super) fn get_task_id(&self) -> &WindowId {
         &self.task_id
     }
-    pub fn get_tasks(&self) -> &Vec<Range<'a, usize>> {
+    pub(super) fn get_tasks(&self) -> &Vec<Range<'a, usize>> {
         &self.tasks
     }
-    pub fn get_location_x(&self) -> (usize, usize) {
+    #[allow(dead_code)]
+    pub(super) fn get_location_x(&self) -> (usize, usize) {
         (self.start_output_index, self.end_output_index)
     }
-    pub fn get_location_y(&self) -> (usize, usize) {
+    #[allow(dead_code)]
+    pub(super) fn get_location_y(&self) -> (usize, usize) {
         (self.start_input_index, self.end_input_index)
     }
-    pub fn get_output_window(&self) -> &Rc<OutputWindow> {
+    pub(super) fn get_output_window(&self) -> &Rc<OutputWindow> {
         &self.output_window
     }
 }
@@ -375,15 +377,14 @@ impl<'a> Iterator for InputWindowIterator<'a> {
 
             //let is_last_row= self.current_window_end_input_index == self.graph.get_num_node();
 
-            let current_window = InputWindow {
-                task_id: task_id.clone(),
+            let current_window = InputWindow::new(
+                task_id.clone(),
                 tasks,
-                start_output_index: self.start_output_index,
-                start_input_index: self.current_window_start_input_index,
-                end_output_index: self.end_output_index,
-                end_input_index: self.current_window_end_input_index,
-
-                output_window: Rc::new(OutputWindow::new(
+                self.start_output_index,
+                self.current_window_start_input_index,
+                self.end_output_index,
+                self.current_window_end_input_index,
+                Rc::new(OutputWindow::new(
                     self.start_output_index,
                     self.end_output_index,
                     task_id.clone(),
@@ -393,7 +394,7 @@ impl<'a> Iterator for InputWindowIterator<'a> {
                     self.final_layer,
                 )),
                 is_last_row,
-            };
+            );
 
             // prepare the next start x and start y
             self.current_window_start_input_index = next_start_row;

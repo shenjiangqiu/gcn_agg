@@ -9,7 +9,7 @@ pub enum MlpState {
 
 #[derive(Debug, PartialEq)]
 pub struct Mlp {
-    pub state: MlpState,
+    state: MlpState,
     remaining_cycle: u64,
     systolic_rows: usize,
     systolic_cols: usize,
@@ -41,6 +41,9 @@ impl Mlp {
             systolic_cols,
             sparse_cores,
         }
+    }
+    pub(super) fn get_state(&self) -> &MlpState {
+        &self.state
     }
 
     /// # Description
@@ -96,9 +99,9 @@ impl Mlp {
     }
 
     pub fn finished_mlp(&mut self) {
-        self.state = MlpState::Finished;
+        self.state = MlpState::Idle;
     }
-
+    #[allow(dead_code)]
     pub fn get_remaining_cycle(&self) -> u64 {
         self.remaining_cycle
     }
