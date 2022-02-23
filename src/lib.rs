@@ -13,7 +13,7 @@ pub mod gcn_result;
 pub mod graph;
 pub mod node_features;
 pub mod settings;
-
+pub mod cmd_args;
 // default re-export
 pub use accelerator::System;
 pub use gcn_result::{GcnAggResult, GcnStatistics};

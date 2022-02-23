@@ -42,14 +42,22 @@ pub struct AggBuffer {
 }
 
 impl AggBuffer {
-    pub(super) fn new(num_nodes: usize) -> Self {
+    pub(super) fn new(num_nodes: usize, is_parse: bool) -> Self {
+        let (current_temp_result, next_temp_result) = match is_parse {
+            true => (
+                Some(TempAggResult::new(num_nodes)),
+                Some(TempAggResult::new(num_nodes)),
+            ),
+            false => (None, None),
+        };
+
         AggBuffer {
             current_state: BufferStatus::Empty,
             next_state: BufferStatus::Empty,
             current_window: None,
             next_window: None,
-            current_temp_result: Some(TempAggResult::new(num_nodes)),
-            next_temp_result: Some(TempAggResult::new(num_nodes)),
+            current_temp_result,
+            next_temp_result,
         }
     }
 }
@@ -115,11 +123,16 @@ impl AggBuffer {
         }
         self.next_state = BufferStatus::Empty;
         // fix bug here, clear the temp result after mlp
-        self.next_temp_result
-            .as_mut()
-            .unwrap()
-            .iter_mut()
-            .for_each(|x| x.clear());
+        match self.next_temp_result {
+            Some(ref mut temp_result) => {
+                temp_result.iter_mut().for_each(|x| {
+                    x.clear();
+                });
+            }
+            None => {
+                // do nothing
+            }
+        }
     }
 
     #[allow(dead_code)]

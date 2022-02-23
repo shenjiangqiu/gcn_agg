@@ -17,6 +17,7 @@ pub enum AggregatorState {
     Finished,
 }
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct Aggregator {
     sparse_cores: usize,
     sparse_width: usize,
@@ -25,7 +26,7 @@ pub struct Aggregator {
     dense_width: usize,
 
     pub state: AggregatorState,
-    last_output_id: usize,
+    // last_output_id: usize,
     current_task_id: Option<WindowId>,
     current_task_remaining_cycles: u64,
 }
@@ -66,7 +67,7 @@ impl Aggregator {
             dense_cores,
             dense_width,
             state: AggregatorState::Idle,
-            last_output_id: 0,
+            // last_output_id: 0,
             current_task_id: None,
             current_task_remaining_cycles: 0,
         }
@@ -96,7 +97,19 @@ impl Aggregator {
                 self.current_task_remaining_cycles = cycles;
             }
             None => {
-                todo!();
+                // dense aggregation
+                let num_add = task
+                    .get_tasks()
+                    .iter()
+                    .fold(0, |acc, x| acc + x.clone().count());
+                let mut cycles: u64 = 0;
+                cycles += (num_add * task.get_output_window().get_input_dim()
+                    / (self.dense_width * self.dense_cores)) as u64;
+                // extra cycle for load data
+                cycles *= 2;
+                self.state = AggregatorState::Working;
+                self.current_task_id = Some(task.get_task_id().clone());
+                self.current_task_remaining_cycles = cycles;
             }
         }
     }

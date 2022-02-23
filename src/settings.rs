@@ -24,11 +24,12 @@ pub struct Settings {
 pub struct AcceleratorSettings {
     pub input_buffer_size: usize,
     pub agg_buffer_size: usize,
-    pub output_buffer_size: usize,
+    // pub output_buffer_size: usize,
     pub gcn_hidden_size: Vec<usize>,
     pub aggregator_settings: AggregatorSettings,
     pub mlp_settings: MlpSettings,
     pub sparsifier_settings: SparsifierSettings,
+    pub is_sparse: bool,
 }
 
 /// # Description

@@ -43,6 +43,7 @@ pub struct System<'a> {
     agg_buffer: AggBuffer,
     mem_interface: MemInterface,
     sparsifier: Sparsifier,
+    is_sparse: bool,
     mlp: Mlp,
 
     graph: &'a Graph,
@@ -50,7 +51,7 @@ pub struct System<'a> {
 
     input_buffer_size: usize,
     agg_buffer_size: usize,
-    output_buffer_size: usize,
+    // output_buffer_size: usize,
     current_layer: usize,
     current_output_iter: OutputWindowIterator<'a>,
     current_input_iter: InputWindowIterator<'a>,
@@ -276,13 +277,14 @@ impl<'a> System<'a> {
     pub fn new(
         graph: &'a Graph,
         node_features: &'a Vec<NodeFeatures>,
+        is_sparse: bool,
         sparse_cores: usize,
         sparse_width: usize,
         dense_cores: usize,
         dense_width: usize,
         input_buffer_size: usize,
         agg_buffer_size: usize,
-        output_buffer_size: usize,
+        // output_buffer_size: usize,
         gcn_layer_num: usize,
         gcn_hidden_size: &'a Vec<usize>,
         systolic_rows: usize,
@@ -295,7 +297,7 @@ impl<'a> System<'a> {
         let input_buffer = InputBuffer::new();
         let output_buffer = OutputBuffer::new();
         let sparsify_buffer = SparsifyBuffer::new();
-        let agg_buffer = AggBuffer::new(graph.get_num_node());
+        let agg_buffer = AggBuffer::new(graph.get_num_node(), is_sparse);
         let mem_config_name = Local::now()
             .format("output/%Y-%m-%d-%H-%M-%S%.6f_mem_stats.txt")
             .to_string();
@@ -310,6 +312,7 @@ impl<'a> System<'a> {
             0,
             gcn_hidden_size,
             gcn_layer_num == 1,
+            is_sparse,
         );
         let mut current_input_iter = current_output_iter
             .next()
@@ -331,12 +334,13 @@ impl<'a> System<'a> {
             output_buffer,
             sparsify_buffer,
             agg_buffer,
+            is_sparse,
             mem_interface,
             graph,
             node_features,
             input_buffer_size,
             agg_buffer_size,
-            output_buffer_size,
+            // output_buffer_size,
             current_layer: 0,
             current_output_iter,
             current_input_iter,
@@ -390,6 +394,7 @@ impl<'a> System<'a> {
                     self.current_layer,
                     self.gcn_hidden_size,
                     self.current_layer == self.gcn_layer_num - 1,
+                    self.is_sparse,
                 );
                 self.current_input_iter = self
                     .current_output_iter
@@ -439,23 +444,44 @@ impl<'a> System<'a> {
                         .get_current_window()
                         .expect("no window in input buffer");
                     let window_layer = window.get_task_id().layer_id;
-                    let start_addrs = &self
-                        .node_features
-                        .get(window_layer)
-                        .expect("no such layer in nodefeatures")
-                        .start_addrs;
-                    let mut start_addr = start_addrs[window.start_input_index];
-                    let end_addr = start_addrs[window.end_input_index];
-                    // round start_addr to the nearest 64
-                    start_addr = start_addr / 64 * 64;
-                    while start_addr < end_addr {
-                        addr_vec.push(start_addr);
-                        start_addr += 64;
+                    if self.is_sparse {
+                        let start_addrs = &self
+                            .node_features
+                            .get(window_layer)
+                            .expect("no such layer in nodefeatures")
+                            .start_addrs;
+                        let mut start_addr = start_addrs[window.start_input_index];
+                        let end_addr = start_addrs[window.end_input_index];
+                        // round start_addr to the nearest 64
+                        start_addr = start_addr / 64 * 64;
+                        while start_addr < end_addr {
+                            addr_vec.push(start_addr);
+                            start_addr += 64;
+                        }
+                        self.mem_interface
+                            .send(window.get_task_id().clone(), addr_vec, false);
+                        self.input_buffer.send_req(true);
+                        return Ok(true);
+                    } else {
+                        // dense
+                        let base_addr: u64 = (window_layer * 0x10000000) as u64;
+                        let mut start_addr = base_addr
+                            + window.start_input_index as u64
+                                * window.get_output_window().get_input_dim() as u64
+                                * 4;
+                        let end_addr = base_addr
+                            + window.end_input_index as u64
+                                * window.get_output_window().get_input_dim() as u64
+                                * 4;
+                        while start_addr < end_addr {
+                            addr_vec.push(start_addr);
+                            start_addr += 64;
+                        }
+                        self.mem_interface
+                            .send(window.get_task_id().clone(), addr_vec, false);
+                        self.input_buffer.send_req(true);
+                        return Ok(true);
                     }
-                    self.mem_interface
-                        .send(window.get_task_id().clone(), addr_vec, false);
-                    self.input_buffer.send_req(true);
-                    return Ok(true);
                 }
             }
             _ => {}
@@ -786,7 +812,7 @@ mod test {
     fn test_system() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::create_dir_all("output")?;
 
-        simple_logger::init_with_level(log::Level::Warn).unwrap_or_default();
+        simple_logger::init_with_level(log::Level::Info).unwrap_or_default();
 
         let graph_name = "test_data/graph_system.txt";
         let graph_data = "f 6\n1 2\n2 3 4\n0 1 4\n0 2 4\n2 4\nend\n";
@@ -814,13 +840,14 @@ mod test {
         let mut system = System::new(
             &graph,
             &node_features,
+            true,
             1,
             1,
             1,
             1,
             64,
             64,
-            64,
+            // 64,
             2,
             &gcn_hidden_size,
             2,

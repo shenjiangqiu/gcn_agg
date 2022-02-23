@@ -1,3 +1,5 @@
+use log::info;
+
 use super::{component::Component, sliding_window::OutputWindow, temp_agg_result::TempAggResult};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -72,11 +74,17 @@ impl Mlp {
         match output_results {
             Some(_output_results) => {
                 // the sparse mlp
+                info!("start sparse mlp");
                 self.state = MlpState::Working;
-                self.remaining_cycle = 10;
-                // TODO: calculate the number of cycles needed to finish the mlp
+                let total_add = _output_results.iter().fold(0, |acc, x| acc + x.len());
+                let mut total_cycle =
+                    total_add * output_window.get_output_dim() / (self.sparse_cores);
+                total_cycle *= 2;
+                self.remaining_cycle = total_cycle as u64;
             }
             None => {
+                info!("start dense mlp");
+                // the dense mlp
                 self.state = MlpState::Working;
                 let mut total_cycles = 0;
                 // calculate the number of cycles needed to finish the mlp

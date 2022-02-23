@@ -1,4 +1,4 @@
-use log::debug;
+use log::{debug, info};
 
 use super::window_id::WindowId;
 use crate::{graph::Graph, node_features::NodeFeatures};
@@ -113,6 +113,7 @@ pub struct OutputWindowIterator<'a> {
     task_id: WindowId,
     gcn_hidden_size: &'a Vec<usize>,
     pub final_layer: bool,
+    is_sparse: bool,
 }
 impl<'a> OutputWindowIterator<'a> {
     pub fn new(
@@ -123,6 +124,7 @@ impl<'a> OutputWindowIterator<'a> {
         layer: usize,
         gcn_hidden_size: &'a Vec<usize>,
         final_layer: bool,
+        is_sparse: bool,
     ) -> OutputWindowIterator<'a> {
         OutputWindowIterator {
             graph,
@@ -137,6 +139,7 @@ impl<'a> OutputWindowIterator<'a> {
             },
             gcn_hidden_size,
             final_layer,
+            is_sparse,
         }
     }
 }
@@ -201,6 +204,7 @@ impl<'a> Iterator for OutputWindowIterator<'a> {
             self.gcn_hidden_size,
             final_iter,
             self.final_layer,
+            self.is_sparse,
         );
         self.task_id.output_id += 1;
         self.current_start_output_index = end_output_index;
@@ -222,6 +226,7 @@ pub struct InputWindowIterator<'a> {
     gcn_hidden_size: &'a Vec<usize>,
     final_iter: bool,
     final_layer: bool,
+    is_spare: bool,
 }
 // impl new for InputWindowIterator
 impl<'a> InputWindowIterator<'a> {
@@ -235,6 +240,7 @@ impl<'a> InputWindowIterator<'a> {
         gcn_hidden_size: &'a Vec<usize>,
         final_iter: bool,
         final_layer: bool,
+        is_spare: bool,
     ) -> Self {
         InputWindowIterator {
             task_id,
@@ -248,6 +254,7 @@ impl<'a> InputWindowIterator<'a> {
             gcn_hidden_size,
             final_iter,
             final_layer,
+            is_spare,
         }
     }
 }
@@ -278,37 +285,59 @@ impl<'a> Iterator for InputWindowIterator<'a> {
             if self.current_window_start_input_index == self.graph.get_num_node() {
                 return None;
             }
+            let task_id = self.task_id.clone();
+
+            let input_node_dim = match task_id.layer_id {
+                0 => self.graph.get_feature_size(),
+                _ => *self.gcn_hidden_size.get(task_id.layer_id - 1).unwrap(),
+            };
+
+            let output_node_dim = match self.final_layer {
+                true => 1,
+                false => *self.gcn_hidden_size.get(self.task_id.layer_id).unwrap(),
+            };
+
             // build the window
             let mut x_size = 0;
             // num of nodes in the window
             let mut x_len = 0;
-            while x_size < self.input_buffer_size / 2
-                && self.current_window_start_input_index + x_len < self.graph.get_num_node()
-            {
-                let new_size = self
-                    .node_features
-                    .get_features(self.current_window_start_input_index + x_len)
-                    .len()
-                    * 4;
-                debug!(
-                    "old size: {},new size: {}, max size: {}",
-                    x_size,
-                    new_size,
-                    self.input_buffer_size / 2
-                );
-                // fix bug here, it's ok to equal!
-                if x_size + new_size > self.input_buffer_size / 2 {
+            if self.is_spare {
+                info!("build sparse window");
+                while x_size < self.input_buffer_size / 2
+                    && self.current_window_start_input_index + x_len < self.graph.get_num_node()
+                {
+                    let new_size = self
+                        .node_features
+                        .get_features(self.current_window_start_input_index + x_len)
+                        .len()
+                        * 4;
                     debug!(
-                        "break!xsize: {}, new size: {}, max size: {}",
+                        "old size: {},new size: {}, max size: {}",
                         x_size,
                         new_size,
                         self.input_buffer_size / 2
                     );
-                    break;
+                    // fix bug here, it's ok to equal!
+                    if x_size + new_size > self.input_buffer_size / 2 {
+                        debug!(
+                            "break!xsize: {}, new size: {}, max size: {}",
+                            x_size,
+                            new_size,
+                            self.input_buffer_size / 2
+                        );
+                        break;
+                    }
+                    x_size += new_size;
+                    x_len += 1;
                 }
-                x_size += new_size;
-                x_len += 1;
+                info!("x_size:{},x_len:{}", x_size, x_len);
+            } else {
+                // dense
+                info!("build dense window");
+                x_len += (self.input_buffer_size / 2) / (input_node_dim * 4);
+                info!("x_len:{}", x_len);
             }
+
             debug!("the x_len is {}", x_len);
             if x_len == 0 {
                 panic!("x_len is 0, the while input buffer cannot add one more node");
@@ -341,20 +370,10 @@ impl<'a> Iterator for InputWindowIterator<'a> {
                 tasks.push(task);
                 output_node_ids.push(i);
             }
-            let task_id = self.task_id.clone();
 
             let tasks = Rc::new(tasks);
             let final_window = self.final_iter;
 
-            let input_node_dim = match task_id.layer_id {
-                0 => self.graph.get_feature_size(),
-                _ => *self.gcn_hidden_size.get(task_id.layer_id - 1).unwrap(),
-            };
-
-            let output_node_dim = match self.final_layer {
-                true => 1,
-                false => *self.gcn_hidden_size.get(self.task_id.layer_id).unwrap(),
-            };
             let mut next_start_row = self.current_window_start_input_index + x_len;
             // test if it't the last row: all the rows after end_input_index should be empty
             let mut is_last_row = true;
@@ -414,7 +433,7 @@ mod test {
     use super::*;
     #[test]
     fn sliding_window_test() {
-        simple_logger::init_with_level(log::Level::Warn).unwrap_or_default();
+        simple_logger::init_with_level(log::Level::Info).unwrap_or_default();
 
         let graph_name = "test_data/graph1.txt";
         let features_name = "test_data/features.txt";
@@ -430,8 +449,16 @@ mod test {
         let graph = Graph::new(graph_name).unwrap();
         let node_features = NodeFeatures::new(features_name).unwrap();
         let gcn_hidden_size = vec![2];
-        let output_window_iter =
-            OutputWindowIterator::new(&graph, &node_features, 32, 32, 0, &gcn_hidden_size, false);
+        let output_window_iter = OutputWindowIterator::new(
+            &graph,
+            &node_features,
+            32,
+            32,
+            0,
+            &gcn_hidden_size,
+            false,
+            true,
+        );
         for i in output_window_iter {
             debug!("{:?}\n", i);
             for j in i {
@@ -441,7 +468,7 @@ mod test {
     }
     #[test]
     fn sliding_window_test_multi() -> Result<(), Box<dyn std::error::Error>> {
-        simple_logger::init_with_level(log::Level::Warn).unwrap_or_default();
+        simple_logger::init_with_level(log::Level::Info).unwrap_or_default();
 
         let graph_name = "test_data/graph2.txt";
         let data = "f 6\n1 2\n2 3 4\n0 1 4\n0 2 4\n2 4\nend\n";
@@ -463,8 +490,16 @@ mod test {
         let node_features2 = NodeFeatures::new("test_data/features2.txt")?;
         let gcn_hidden_size = vec![2];
         // max input num=2, max output num=1
-        let output_window_iter =
-            OutputWindowIterator::new(&graph, &node_features1, 48, 32, 0, &gcn_hidden_size, false);
+        let output_window_iter = OutputWindowIterator::new(
+            &graph,
+            &node_features1,
+            48,
+            32,
+            0,
+            &gcn_hidden_size,
+            false,
+            true,
+        );
         let mut total_windows = 0;
         for i in output_window_iter {
             debug!("{:?}\n\n", i);
@@ -473,8 +508,16 @@ mod test {
                 debug!("{:?}\n\n", j);
             }
         }
-        let output_window_iter =
-            OutputWindowIterator::new(&graph, &node_features2, 48, 32, 1, &gcn_hidden_size, true);
+        let output_window_iter = OutputWindowIterator::new(
+            &graph,
+            &node_features2,
+            48,
+            32,
+            1,
+            &gcn_hidden_size,
+            true,
+            true,
+        );
         for i in output_window_iter {
             debug!("{:?}\n\n", i);
             for j in i {

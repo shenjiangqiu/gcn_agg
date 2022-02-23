@@ -1,31 +1,34 @@
 use chrono::Local;
+use clap::{Command, CommandFactory, Parser};
+use clap_complete::{generate, Generator};
 use gcn_agg::{
+    cmd_args::Args,
     settings::{
         AcceleratorSettings, AggregatorSettings, MlpSettings, Settings, SparsifierSettings,
     },
     GcnAggResult, Graph, NodeFeatures, System,
 };
-
+use std::io;
+fn print_completions<G: Generator>(gen: G, cmd: &mut Command) {
+    generate(gen, cmd, cmd.get_name().to_string(), &mut io::stdout());
+}
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    simple_logger::init_with_level(log::Level::Warn)?;
+    simple_logger::init_with_level(log::Level::Info)?;
     let start_time = std::time::Instant::now();
 
     let mut config_names = vec![String::from("configs/default.toml")];
-    let margs: Vec<String> = std::env::args().collect();
-    if let Some(first_arg) = margs.get(1) {
-        if first_arg == "--help" || first_arg == "-h" {
-            println!("Usage: gcn_agg [config_file ...]");
-            println!("If no config file is specified, the default config file is used.");
-            println!("The default config file is configs/default.toml");
-            println!("all the config files in configs/user_configs/ are also automaticly loaded.");
-            println!("for example: gcn_agg configs/optional_configs/my_config.toml");
-            println!("will load configs/default.toml and configs/optional_configs/my_config.toml and all the config files in configs/user_configs/");
-            return Ok(());
-        }
+    let args = Args::parse();
+    if let Some(generator) = args.generator {
+        let mut cmd = Args::command();
+        eprintln!("Generating completion file for {:?}...", generator);
+        print_completions(generator, &mut cmd);
+        return Ok(());
     }
+    println!("{:?}", args);
+    let margs = args.config_names;
 
     // config_names append args
-    for arg in margs.into_iter().skip(1) {
+    for arg in margs.into_iter() {
         config_names.push(arg);
     }
 
@@ -53,7 +56,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         aggregator_settings,
         mlp_settings,
         sparsifier_settings,
-        output_buffer_size,
+        // output_buffer_size,
+        is_sparse,
     } = settings.accelerator_settings;
 
     let AggregatorSettings {
@@ -74,13 +78,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut system = System::new(
         &graph,
         &node_features,
+        is_sparse,
         sparse_cores,
         sparse_width,
         dense_cores,
         dense_width,
         input_buffer_size,
         agg_buffer_size,
-        output_buffer_size,
+        // output_buffer_size,
         node_features.len(),
         &gcn_hidden_size,
         systolic_rows,

@@ -1,1 +1,2 @@
 # add user defined configs in this folder will all be loaded
+description = "the user config"
