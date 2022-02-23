@@ -87,7 +87,7 @@ impl Component for MemInterface {
                                 .insert(req.id.clone());
                             self.current_waiting_request
                                 .entry(req.id.clone())
-                                .or_insert(HashSet::new())
+                                .or_insert_with(HashSet::new)
                                 .insert(addr);
                         } else if self.mem.available(addr, req.is_write) {
                             debug!("addr: {} ready to send!", addr);
@@ -95,11 +95,11 @@ impl Component for MemInterface {
 
                             self.current_waiting_request
                                 .entry(req.id.clone())
-                                .or_insert(HashSet::new())
+                                .or_insert_with(HashSet::new)
                                 .insert(addr);
                             self.current_waiting_mem_request
                                 .entry(addr)
-                                .or_insert(HashSet::new())
+                                .or_insert_with(HashSet::new)
                                 .insert(req.id.clone());
 
                             self.mem.send(addr, req.is_write);
@@ -111,7 +111,7 @@ impl Component for MemInterface {
                 }
             }
 
-            if req.addr_vec.len() == 0 {
+            if req.addr_vec.is_empty() {
                 self.send_queue.pop_front();
             }
         }
@@ -122,14 +122,14 @@ impl Component for MemInterface {
             let id_list = self
                 .current_waiting_mem_request
                 .remove(&addr)
-                .expect(format!("no request for addr {}", addr).as_str());
+                .unwrap_or_else(|| panic!("no request for addr {}", addr));
             for id in id_list {
                 let req = self
                     .current_waiting_request
                     .get_mut(&id)
-                    .expect(format!("no request for id {:?}", id).as_str());
+                    .unwrap_or_else(|| panic!("no request for id {:?}", id));
                 req.remove(&addr);
-                if req.len() == 0 {
+                if req.is_empty() {
                     self.current_waiting_request.remove(&id);
                     debug!("all memory for id:{:?} is back, ready to send", id);
                     self.recv_queue.push_back(id);
@@ -201,30 +201,30 @@ mod tests {
 
         simple_logger::init_with_level(log::Level::Info).unwrap_or_default();
         let mut mem_interface = super::MemInterface::new(10, 10, "output/test3_mem_stat.txt");
-        assert_eq!(mem_interface.available(), true);
+        assert!(mem_interface.available());
         // assert_eq!(mem_interface.receive().is_some(), false);
         mem_interface.send(WindowId::new(1, 1, 1), vec![0], false);
         mem_interface.send(WindowId::new(1, 2, 1), vec![64, 512, 1024], false);
 
-        assert_eq!(mem_interface.available(), true);
+        assert!(mem_interface.available());
         // assert_eq!(mem_interface.receive().is_some(), false);
 
         while mem_interface.receive().is_none() {
             mem_interface.cycle()?;
         }
 
-        assert_eq!(mem_interface.available(), true);
-        assert_eq!(mem_interface.receive().is_some(), true);
+        assert!(mem_interface.available());
+        assert!(mem_interface.receive().is_some());
 
         let result = mem_interface.receive_pop().expect("no response");
         assert_eq!(result, WindowId::new(1, 1, 1));
-        while !mem_interface.receive().is_some() {
+        while mem_interface.receive().is_none() {
             mem_interface.cycle()?;
         }
         let result = mem_interface.receive_pop().expect("no response");
         assert_eq!(result, WindowId::new(1, 2, 1));
-        assert_eq!(mem_interface.current_waiting_mem_request.is_empty(), true);
-        assert_eq!(mem_interface.current_waiting_request.is_empty(), true);
+        assert!(mem_interface.current_waiting_mem_request.is_empty());
+        assert!(mem_interface.current_waiting_request.is_empty());
         assert!(mem_interface.receive().is_none());
         Ok(())
     }

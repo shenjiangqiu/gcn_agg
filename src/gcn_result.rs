@@ -8,7 +8,7 @@ use serde::Serialize;
 /// # Fields
 /// - settings: the settings of gcn simulation.`gcn_agg::settings::Settings`
 /// - stats: the statistics
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 pub struct GcnAggResult {
     pub settings: Option<Settings>,
     pub stats: Option<GcnStatistics>,
@@ -27,7 +27,7 @@ impl GcnAggResult {
 /// # Fields
 /// - simulation_time: the simulation time
 /// - cycle: the number of cycles
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize,Default)]
 pub struct GcnStatistics {
     pub cycle: u64,
     pub simulation_time: String,

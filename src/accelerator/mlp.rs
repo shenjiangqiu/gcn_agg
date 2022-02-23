@@ -20,15 +20,12 @@ pub struct Mlp {
 
 impl Component for Mlp {
     fn cycle(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        match self.state {
-            MlpState::Working => {
-                if self.remaining_cycle == 0 {
-                    self.state = MlpState::Finished;
-                } else {
-                    self.remaining_cycle -= 1;
-                }
+        if self.state == MlpState::Working {
+            if self.remaining_cycle == 0 {
+                self.state = MlpState::Finished;
+            } else {
+                self.remaining_cycle -= 1;
             }
-            _ => {}
         }
         Ok(())
     }

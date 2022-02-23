@@ -44,12 +44,9 @@ impl Component for OutputBuffer {
     /// ```
     ///
     fn cycle(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        match (&self.current_state, &self.next_state) {
-            (BufferStatus::WaitingToWriteBack, BufferStatus::Empty) => {
-                swap(&mut self.current_state, &mut self.next_state);
-                swap(&mut self.current_window, &mut self.next_window);
-            }
-            _ => {}
+        if let (BufferStatus::WaitingToWriteBack, BufferStatus::Empty) = (&self.current_state, &self.next_state) {
+            swap(&mut self.current_state, &mut self.next_state);
+            swap(&mut self.current_window, &mut self.next_window);
         }
         Ok(())
     }

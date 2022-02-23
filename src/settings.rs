@@ -69,7 +69,7 @@ impl Settings {
     pub fn new(config_path: Vec<String>) -> Result<Self, Box<dyn Error>> {
         let input_files = config_path.iter().map(|x| File::with_name(x)).collect_vec();
         let default_files: Vec<_> = glob("configs/user_configs/*.toml")?
-            .map_ok(|x| File::from(x))
+            .map_ok(File::from)
             .try_collect()?;
 
         let result: Settings = Config::builder()

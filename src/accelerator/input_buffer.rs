@@ -228,17 +228,11 @@ impl<'a> InputBuffer<'a> {
     // }
 
     pub fn get_current_window(&self) -> Option<&InputWindow<'a>> {
-        match self.current_window {
-            Some(ref window) => Some(window),
-            None => None,
-        }
+        self.current_window.as_ref()
     }
 
     pub fn get_next_window(&self) -> Option<&InputWindow<'a>> {
-        match self.next_window {
-            Some(ref window) => Some(window),
-            None => None,
-        }
+        self.next_window.as_ref()
     }
 
     pub fn get_current_state(&self) -> &BufferStatus {

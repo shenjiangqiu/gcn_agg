@@ -164,16 +164,16 @@ mod graph_test {
 
         let graph = Graph::new(file_name)?;
         assert_eq!(graph.get_feature_size(), 3);
-        assert_eq!(graph.get_csc()[0].contains(&0), true);
-        assert_eq!(graph.get_csc()[0].contains(&1), true);
-        assert_eq!(graph.get_csc()[0].contains(&2), true);
+        assert!(graph.get_csc()[0].contains(&0));
+        assert!(graph.get_csc()[0].contains(&1));
+        assert!(graph.get_csc()[0].contains(&2));
 
-        assert_eq!(graph.get_csc()[1].contains(&0), true);
-        assert_eq!(graph.get_csc()[1].contains(&1), true);
-        assert_eq!(graph.get_csc()[1].contains(&2), true);
-        assert_eq!(graph.get_csc()[2].contains(&0), true);
-        assert_eq!(graph.get_csc()[2].contains(&1), true);
-        assert_eq!(graph.get_csc()[2].contains(&2), true);
+        assert!(graph.get_csc()[1].contains(&0));
+        assert!(graph.get_csc()[1].contains(&1));
+        assert!(graph.get_csc()[1].contains(&2));
+        assert!(graph.get_csc()[2].contains(&0));
+        assert!(graph.get_csc()[2].contains(&1));
+        assert!(graph.get_csc()[2].contains(&2));
         // delete the file
         std::fs::remove_file(file_name).expect("failed to delete the file");
         Ok(())
@@ -192,12 +192,12 @@ mod graph_test {
         graph.generate_csr();
 
         if let Some(csr) = graph.get_csr() {
-            assert_eq!(csr[0].contains(&0), true);
-            assert_eq!(csr[0].contains(&2), true);
-            assert_eq!(csr[1].contains(&0), true);
-            assert_eq!(csr[1].contains(&1), true);
-            assert_eq!(csr[2].contains(&1), true);
-            assert_eq!(csr[2].contains(&2), true);
+            assert!(csr[0].contains(&0));
+            assert!(csr[0].contains(&2));
+            assert!(csr[1].contains(&0));
+            assert!(csr[1].contains(&1));
+            assert!(csr[2].contains(&1));
+            assert!(csr[2].contains(&2));
             assert_eq!(csr.len(), 3);
         } else {
             panic!("csr is not generated");

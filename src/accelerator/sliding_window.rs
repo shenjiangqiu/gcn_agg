@@ -4,7 +4,14 @@ use super::window_id::WindowId;
 use crate::{graph::Graph, node_features::NodeFeatures};
 use core::panic;
 use std::{cmp, collections::btree_set::Range, rc::Rc};
-
+pub struct WindowIterSettings {
+    pub agg_buffer_size: usize,
+    pub input_buffer_size: usize,
+    pub layer: usize,
+    pub gcn_hidden_size: Vec<usize>,
+    pub final_layer: bool,
+    pub is_sparse: bool,
+}
 #[derive(Debug, Clone)]
 pub struct InputWindow<'a> {
     pub task_id: WindowId,
@@ -62,17 +69,28 @@ impl OutputWindow {
     }
 }
 
+pub struct RangeIndex {
+    start_input_index: usize,
+    end_input_index: usize,
+    start_output_index: usize,
+    end_output_index: usize,
+}
+
 impl<'a> InputWindow<'a> {
     pub(super) fn new(
         task_id: WindowId,
         tasks: Rc<Vec<Range<'a, usize>>>,
-        start_output_index: usize,
-        start_input_index: usize,
-        end_output_index: usize,
-        end_input_index: usize,
+        range_index: RangeIndex,
         output_window: Rc<OutputWindow>,
         is_last_row: bool,
     ) -> InputWindow<'a> {
+        let RangeIndex {
+            start_input_index,
+            end_input_index,
+            start_output_index,
+            end_output_index,
+        } = range_index;
+
         InputWindow {
             task_id,
             tasks,
@@ -111,21 +129,25 @@ pub struct OutputWindowIterator<'a> {
     input_buffer_size: usize,
     current_start_output_index: usize,
     task_id: WindowId,
-    gcn_hidden_size: &'a Vec<usize>,
+    gcn_hidden_size: Vec<usize>,
     pub final_layer: bool,
     is_sparse: bool,
 }
+
 impl<'a> OutputWindowIterator<'a> {
     pub fn new(
         graph: &'a Graph,
         node_features: &'a NodeFeatures,
-        agg_buffer_size: usize,
-        input_buffer_size: usize,
-        layer: usize,
-        gcn_hidden_size: &'a Vec<usize>,
-        final_layer: bool,
-        is_sparse: bool,
+        window_iter_settings: WindowIterSettings,
     ) -> OutputWindowIterator<'a> {
+        let WindowIterSettings {
+            agg_buffer_size,
+            input_buffer_size,
+            layer,
+            gcn_hidden_size,
+            final_layer,
+            is_sparse,
+        } = window_iter_settings;
         OutputWindowIterator {
             graph,
             node_features,
@@ -186,25 +208,21 @@ impl<'a> Iterator for OutputWindowIterator<'a> {
             self.current_start_output_index + output_size,
             self.graph.get_num_node(),
         );
-        let final_iter = {
-            if end_output_index >= self.graph.get_num_node() {
-                true
-            } else {
-                false
-            }
+        let final_iter = { end_output_index >= self.graph.get_num_node() };
+        let input_iter_settings = InputIterSettings {
+            input_buffer_size: self.input_buffer_size,
+            start_output_index: self.current_start_output_index,
+            end_output_index,
+            gcn_hidden_size: self.gcn_hidden_size.clone(),
+            final_iter,
+            final_layer: self.final_layer,
+            is_spare: self.is_sparse,
         };
-
         let intput_iter = InputWindowIterator::new(
             self.task_id.clone(),
             self.graph,
             self.node_features,
-            self.input_buffer_size,
-            self.current_start_output_index,
-            end_output_index,
-            self.gcn_hidden_size,
-            final_iter,
-            self.final_layer,
-            self.is_sparse,
+            input_iter_settings,
         );
         self.task_id.output_id += 1;
         self.current_start_output_index = end_output_index;
@@ -223,25 +241,37 @@ pub struct InputWindowIterator<'a> {
     // current window information
     current_window_start_input_index: usize,
     current_window_end_input_index: usize,
-    gcn_hidden_size: &'a Vec<usize>,
+    gcn_hidden_size: Vec<usize>,
     final_iter: bool,
     final_layer: bool,
     is_spare: bool,
 }
 // impl new for InputWindowIterator
+pub struct InputIterSettings {
+    pub input_buffer_size: usize,
+    pub start_output_index: usize,
+    pub end_output_index: usize,
+    pub gcn_hidden_size: Vec<usize>,
+    pub final_iter: bool,
+    pub final_layer: bool,
+    pub is_spare: bool,
+}
 impl<'a> InputWindowIterator<'a> {
-    fn new(
+    pub fn new(
         task_id: WindowId,
         graph: &'a Graph,
         node_features: &'a NodeFeatures,
-        input_buffer_size: usize,
-        start_output_index: usize,
-        end_output_index: usize,
-        gcn_hidden_size: &'a Vec<usize>,
-        final_iter: bool,
-        final_layer: bool,
-        is_spare: bool,
+        input_iter_settings: InputIterSettings,
     ) -> Self {
+        let InputIterSettings {
+            input_buffer_size,
+            start_output_index,
+            end_output_index,
+            gcn_hidden_size,
+            final_iter,
+            final_layer,
+            is_spare,
+        } = input_iter_settings;
         InputWindowIterator {
             task_id,
             graph,
@@ -264,7 +294,7 @@ impl<'a> Iterator for InputWindowIterator<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         // test if no window left
         if self.current_window_start_input_index >= self.graph.get_num_node() {
-            return None;
+            None
         } else {
             // first skip all emtpy rows
             while self.current_window_start_input_index < self.graph.get_num_node() {
@@ -395,18 +425,20 @@ impl<'a> Iterator for InputWindowIterator<'a> {
             }
 
             //let is_last_row= self.current_window_end_input_index == self.graph.get_num_node();
-
+            let range_index = RangeIndex {
+                start_input_index: self.current_window_start_input_index,
+                end_input_index: self.current_window_end_input_index,
+                start_output_index: self.start_output_index,
+                end_output_index: self.end_output_index,
+            };
             let current_window = InputWindow::new(
                 task_id.clone(),
                 tasks,
-                self.start_output_index,
-                self.current_window_start_input_index,
-                self.end_output_index,
-                self.current_window_end_input_index,
+                range_index,
                 Rc::new(OutputWindow::new(
                     self.start_output_index,
                     self.end_output_index,
-                    task_id.clone(),
+                    task_id,
                     output_node_dim,
                     input_node_dim,
                     final_window,
@@ -419,7 +451,7 @@ impl<'a> Iterator for InputWindowIterator<'a> {
             self.current_window_start_input_index = next_start_row;
 
             self.task_id.input_id += 1;
-            return Some(current_window);
+            Some(current_window)
         }
     }
 }
@@ -449,16 +481,16 @@ mod test {
         let graph = Graph::new(graph_name).unwrap();
         let node_features = NodeFeatures::new(features_name).unwrap();
         let gcn_hidden_size = vec![2];
-        let output_window_iter = OutputWindowIterator::new(
-            &graph,
-            &node_features,
-            32,
-            32,
-            0,
-            &gcn_hidden_size,
-            false,
-            true,
-        );
+        let window_iter_settings = WindowIterSettings {
+            agg_buffer_size: 32,
+            input_buffer_size: 32,
+            layer: 0,
+            final_layer: false,
+            is_sparse: true,
+            gcn_hidden_size,
+        };
+        let output_window_iter =
+            OutputWindowIterator::new(&graph, &node_features, window_iter_settings);
         for i in output_window_iter {
             debug!("{:?}\n", i);
             for j in i {
@@ -490,16 +522,16 @@ mod test {
         let node_features2 = NodeFeatures::new("test_data/features2.txt")?;
         let gcn_hidden_size = vec![2];
         // max input num=2, max output num=1
-        let output_window_iter = OutputWindowIterator::new(
-            &graph,
-            &node_features1,
-            48,
-            32,
-            0,
-            &gcn_hidden_size,
-            false,
-            true,
-        );
+        let window_iter_settings = WindowIterSettings {
+            agg_buffer_size: 48,
+            input_buffer_size: 32,
+            layer: 0,
+            final_layer: false,
+            is_sparse: true,
+            gcn_hidden_size: gcn_hidden_size.clone(),
+        };
+        let output_window_iter =
+            OutputWindowIterator::new(&graph, &node_features1, window_iter_settings);
         let mut total_windows = 0;
         for i in output_window_iter {
             debug!("{:?}\n\n", i);
@@ -508,16 +540,16 @@ mod test {
                 debug!("{:?}\n\n", j);
             }
         }
-        let output_window_iter = OutputWindowIterator::new(
-            &graph,
-            &node_features2,
-            48,
-            32,
-            1,
-            &gcn_hidden_size,
-            true,
-            true,
-        );
+        let window_iter_settings = WindowIterSettings {
+            agg_buffer_size: 48,
+            input_buffer_size: 32,
+            layer: 1,
+            final_layer: true,
+            is_sparse: true,
+            gcn_hidden_size,
+        };
+        let output_window_iter =
+            OutputWindowIterator::new(&graph, &node_features2, window_iter_settings);
         for i in output_window_iter {
             debug!("{:?}\n\n", i);
             for j in i {

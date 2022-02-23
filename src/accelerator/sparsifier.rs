@@ -21,15 +21,12 @@ pub struct Sparsifier {
 
 impl Component for Sparsifier {
     fn cycle(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        match self.state {
-            SparsifierState::Working => {
-                if self.remaining_cycle == 0 {
-                    self.state = SparsifierState::Idle;
-                } else {
-                    self.remaining_cycle -= 1;
-                }
+        if self.state == SparsifierState::Working {
+            if self.remaining_cycle == 0 {
+                self.state = SparsifierState::Idle;
+            } else {
+                self.remaining_cycle -= 1;
             }
-            _ => {}
         }
         Ok(())
     }

@@ -85,14 +85,11 @@ impl Component for AggBuffer {
     /// ```
     ///
     fn cycle(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        match (&self.current_state, &self.next_state) {
-            (BufferStatus::WaitingToMlp, BufferStatus::Empty) => {
-                swap(&mut self.current_state, &mut self.next_state);
-                swap(&mut self.current_window, &mut self.next_window);
-                // swap temp result
-                swap(&mut self.current_temp_result, &mut self.next_temp_result);
-            }
-            _ => {}
+        if let (BufferStatus::WaitingToMlp, BufferStatus::Empty) = (&self.current_state, &self.next_state) {
+            swap(&mut self.current_state, &mut self.next_state);
+            swap(&mut self.current_window, &mut self.next_window);
+            // swap temp result
+            swap(&mut self.current_temp_result, &mut self.next_temp_result);
         }
         Ok(())
     }
@@ -123,31 +120,26 @@ impl AggBuffer {
         }
         self.next_state = BufferStatus::Empty;
         // fix bug here, clear the temp result after mlp
-        match self.next_temp_result {
-            Some(ref mut temp_result) => {
-                temp_result.iter_mut().for_each(|x| {
-                    x.clear();
-                });
-            }
-            None => {
-                // do nothing
-            }
+        if let Some(ref mut temp_result) = self.next_temp_result {
+            temp_result.iter_mut().for_each(|x| {
+                x.clear();
+            });
         }
     }
 
     #[allow(dead_code)]
     pub(super) fn get_current_window(&self) -> &Rc<OutputWindow> {
-        &self
+        self
             .current_window
             .as_ref()
-            .expect(format!("window should not be None!!").as_str())
+            .unwrap_or_else(|| panic!("window should not be None!!"))
     }
 
     pub(super) fn get_next_window(&self) -> &Rc<OutputWindow> {
-        &self
+        self
             .next_window
             .as_ref()
-            .expect(format!("window should not be None!!").as_str())
+            .unwrap_or_else(|| panic!("window should not be None!!"))
     }
     pub(super) fn get_current_state(&self) -> &BufferStatus {
         &self.current_state

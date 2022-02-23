@@ -48,12 +48,9 @@ impl Component for SparsifyBuffer {
     /// ```
     ///
     fn cycle(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        match (&self.current_state, &self.next_state) {
-            (BufferStatus::WaitingToSparsify, BufferStatus::Empty) => {
-                swap(&mut self.current_state, &mut self.next_state);
-                swap(&mut self.current_window, &mut self.next_window);
-            }
-            _ => {}
+        if let (BufferStatus::WaitingToSparsify, BufferStatus::Empty) = (&self.current_state, &self.next_state) {
+            swap(&mut self.current_state, &mut self.next_state);
+            swap(&mut self.current_window, &mut self.next_window);
         }
         Ok(())
     }

@@ -9,6 +9,7 @@ use gcn_agg::{
         AcceleratorSettings, AggregatorSettings, MlpSettings, Settings, SparsifierSettings,
     },
 };
+use itertools::Itertools;
 
 #[test]
 fn test_system() -> Result<(), Box<dyn std::error::Error>> {
@@ -29,10 +30,10 @@ fn test_system() -> Result<(), Box<dyn std::error::Error>> {
 
     let graph = Graph::new(graph_name.as_str())?;
 
-    let node_features = features_name
+    let node_features: Vec<_> = features_name
         .iter()
         .map(|x| NodeFeatures::new(x.as_str()))
-        .collect::<Result<_, _>>()?;
+        .try_collect()?;
 
     let AcceleratorSettings {
         input_buffer_size,
@@ -59,25 +60,25 @@ fn test_system() -> Result<(), Box<dyn std::error::Error>> {
     } = mlp_settings;
 
     let SparsifierSettings { sparsifier_cores } = sparsifier_settings;
-
-    let mut system = System::new(
-        &graph,
-        &node_features,
-        is_sparse,
-        sparse_cores,
-        sparse_width,
-        dense_cores,
-        dense_width,
-        input_buffer_size,
+    let acc_settings = AcceleratorSettings {
         agg_buffer_size,
-        // output_buffer_size,
-        node_features.len(),
-        &gcn_hidden_size,
-        systolic_rows,
-        systolic_cols,
-        mlp_sparse_cores,
-        sparsifier_cores,
-    );
+        input_buffer_size,
+        gcn_hidden_size,
+        is_sparse,
+        aggregator_settings: AggregatorSettings {
+            dense_cores,
+            dense_width,
+            sparse_cores,
+            sparse_width,
+        },
+        mlp_settings: MlpSettings {
+            systolic_rows,
+            systolic_cols,
+            mlp_sparse_cores,
+        },
+        sparsifier_settings: SparsifierSettings { sparsifier_cores },
+    };
+    let mut system = System::new(&graph, &node_features, acc_settings);
 
     // run the system
     let mut stat = system.run()?;
@@ -98,7 +99,7 @@ fn test_system() -> Result<(), Box<dyn std::error::Error>> {
     println!("{}", serde_json::to_string_pretty(&results)?);
     // write json of results to output_path
     std::fs::write(output_path, serde_json::to_string_pretty(&results)?)?;
-    return Ok(());
+    Ok(())
 }
 #[test]
 fn test_system_dense() -> Result<(), Box<dyn std::error::Error>> {
@@ -123,10 +124,10 @@ fn test_system_dense() -> Result<(), Box<dyn std::error::Error>> {
 
     let graph = Graph::new(graph_name.as_str())?;
 
-    let node_features = features_name
+    let node_features: Vec<_> = features_name
         .iter()
         .map(|x| NodeFeatures::new(x.as_str()))
-        .collect::<Result<_, _>>()?;
+        .try_collect()?;
 
     let AcceleratorSettings {
         input_buffer_size,
@@ -153,25 +154,25 @@ fn test_system_dense() -> Result<(), Box<dyn std::error::Error>> {
     } = mlp_settings;
 
     let SparsifierSettings { sparsifier_cores } = sparsifier_settings;
-
-    let mut system = System::new(
-        &graph,
-        &node_features,
-        is_sparse,
-        sparse_cores,
-        sparse_width,
-        dense_cores,
-        dense_width,
-        input_buffer_size,
+    let acc_settings = AcceleratorSettings {
         agg_buffer_size,
-        // output_buffer_size,
-        node_features.len(),
-        &gcn_hidden_size,
-        systolic_rows,
-        systolic_cols,
-        mlp_sparse_cores,
-        sparsifier_cores,
-    );
+        input_buffer_size,
+        gcn_hidden_size,
+        is_sparse,
+        aggregator_settings: AggregatorSettings {
+            dense_cores,
+            dense_width,
+            sparse_cores,
+            sparse_width,
+        },
+        mlp_settings: MlpSettings {
+            systolic_rows,
+            systolic_cols,
+            mlp_sparse_cores,
+        },
+        sparsifier_settings: SparsifierSettings { sparsifier_cores },
+    };
+    let mut system = System::new(&graph, &node_features, acc_settings);
 
     // run the system
     let mut stat = system.run()?;
@@ -192,5 +193,5 @@ fn test_system_dense() -> Result<(), Box<dyn std::error::Error>> {
     println!("{}", serde_json::to_string_pretty(&results)?);
     // write json of results to output_path
     std::fs::write(output_path, serde_json::to_string_pretty(&results)?)?;
-    return Ok(());
+    Ok(())
 }

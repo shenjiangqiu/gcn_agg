@@ -2,6 +2,8 @@ use std::error::Error;
 use std::fs::File;
 use std::io::Read;
 
+use itertools::Itertools;
+
 #[derive(Debug)]
 pub struct NodeFeatures {
     pub features: Vec<Vec<usize>>,
@@ -60,31 +62,39 @@ impl NodeFeatures {
         // the file contains adjacency matrix
         // each line is a node
         let mut file = File::open(file_name)?;
+        // contnents contains all the file in 0 1 0 1\n 1 0 1 1\n 1 1 0 0\n format
         let mut contents = String::new();
+
         file.read_to_string(&mut contents)?;
         let mut features = Vec::new();
 
         for line in contents.lines() {
-            let mut line_vec = Vec::new();
-            for num in line.split_whitespace() {
-                line_vec.push(num.parse::<usize>()?);
-            }
+            // each line is a node in 0 1 0 1 format
+            let line_vec: Vec<_> = line
+                .split_whitespace()
+                .map(|x| x.parse::<usize>())
+                .try_collect()?;
+
             // convert the line to csc format
             let mut csc_line = Vec::new();
-            for i in 0..line_vec.len() {
-                if line_vec[i] != 0 {
+            // build the csc format: 0 1 0 1 => 1,3
+            for (i, &item) in line_vec.iter().enumerate() {
+                if item != 0 {
                     csc_line.push(i);
                 }
             }
+
             features.push(csc_line);
         }
         // build start addr from the node features
 
-        let mut start_addrs = Vec::new();
-        start_addrs.push(0u64);
-        for i in 1..=features.len() {
-            start_addrs.push(start_addrs[i - 1] + features[i - 1].len() as u64 * 4);
-        }
+        let mut start_addrs: Vec<u64> = vec![];
+        let last = features.iter().fold(0, |acc, x| {
+            start_addrs.push(acc);
+            acc + (x.len() * 4) as u64
+        });
+        start_addrs.push(last);
+
         Ok(NodeFeatures {
             features,
             start_addrs,
@@ -97,6 +107,9 @@ impl NodeFeatures {
     }
     pub fn len(&self) -> usize {
         self.features.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.features.is_empty()
     }
 }
 

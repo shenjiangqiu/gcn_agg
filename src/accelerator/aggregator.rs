@@ -40,15 +40,12 @@ impl Component for Aggregator {
     /// ```
     ///
     fn cycle(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        match self.state {
-            AggregatorState::Working => {
-                if self.current_task_remaining_cycles == 0 {
-                    self.state = AggregatorState::Finished;
-                } else {
-                    self.current_task_remaining_cycles -= 1;
-                }
+        if self.state == AggregatorState::Working {
+            if self.current_task_remaining_cycles == 0 {
+                self.state = AggregatorState::Finished;
+            } else {
+                self.current_task_remaining_cycles -= 1;
             }
-            _ => {}
         }
         Ok(())
     }
@@ -166,11 +163,11 @@ impl Aggregator {
 
         // each cores current cycles, always push task to the core with the least cycles
         let mut core_cycles = vec![0; self.sparse_cores];
-        for i in cycle_vec {
-            core_cycles.sort();
+        cycle_vec.into_iter().for_each(|i| {
+            core_cycles.sort_unstable();
             core_cycles[0] += i;
-        }
-        core_cycles.sort();
+        });
+        core_cycles.sort_unstable();
         let cycles = *core_cycles.last().unwrap_or(&0);
 
         cycles as u64
