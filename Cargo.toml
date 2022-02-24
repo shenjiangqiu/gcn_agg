@@ -1,18 +1,19 @@
 [package]
 edition = "2021"
 name = "gcn_agg"
-version = "0.2.1"
+version = "0.2.2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 description = "Aggregates GCN data"
 license = "MIT"
 
 [dependencies]
+ramulator_wrapper = "0.2"
+
 enum-as-inner = "0.3"
 itertools = "0.10"
 lazy_static = "1.4"
 log = "0.4"
-ramulator_wrapper = "0.2"
 
 chrono = "0.4"
 clap = {version = "3.1.1", features = ["derive"]}
