@@ -10,6 +10,7 @@ fn print_completions<G: Generator>(gen: G, cmd: &mut Command) {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     simple_logger::init_with_level(log::Level::Info)?;
     let start_time = std::time::Instant::now();
+    let current_time: String = Local::now().format("%Y-%m-%d-%H-%M-%S%.6f").to_string();
 
     let mut config_names = vec![String::from("configs/default.toml")];
     let args = Args::parse();
@@ -27,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         config_names.push(arg);
     }
 
-    let mut results = GcnAggResult::new();
+    let mut results = GcnAggResult::default();
     let settings = Settings::new(config_names)?;
     results.settings = Some(settings.clone());
     println!("{}", serde_json::to_string_pretty(&settings)?);
@@ -43,8 +44,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .map(|x| NodeFeatures::new(x.as_str()))
         .try_collect()?;
-
-    let mut system = System::new(&graph, &node_features, settings.accelerator_settings);
+    let stats_name = format!("output/{}_mem_stat.txt", current_time);
+    let mut system = System::new(
+        &graph,
+        &node_features,
+        settings.accelerator_settings,
+        &stats_name,
+    );
 
     // run the system
     let mut stat = system.run()?;
@@ -59,7 +65,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     stat.simulation_time = time_str;
 
     results.stats = Some(stat);
-    let current_time: String = Local::now().format("%Y-%m-%d-%H-%M-%S%.6f").to_string();
     let output_path = format!("output/{}.json", current_time);
 
     println!("{}", serde_json::to_string_pretty(&results)?);

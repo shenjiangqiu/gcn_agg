@@ -1,4 +1,6 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+};
 
 use log::debug;
 use ramulator_wrapper::RamulatorWrapper;
@@ -142,9 +144,9 @@ impl Component for MemInterface {
 }
 
 impl MemInterface {
-    pub fn new(send_size: usize, recv_size: usize, config_name: &str) -> Self {
+    pub fn new(send_size: usize, recv_size: usize, config_name: &str, stats_name: &str) -> Self {
         MemInterface {
-            mem: RamulatorWrapper::new(config_name),
+            mem: RamulatorWrapper::new(config_name, stats_name),
             send_queue: VecDeque::new(),
             send_size,
             recv_queue: VecDeque::new(),
@@ -200,7 +202,7 @@ mod tests {
         std::fs::create_dir_all("output")?;
 
         simple_logger::init_with_level(log::Level::Info).unwrap_or_default();
-        let mut mem_interface = super::MemInterface::new(10, 10, "output/test3_mem_stat.txt");
+        let mut mem_interface = super::MemInterface::new(10, 10, "HBM-config.cfg","output/test3_mem_stat.txt");
         assert!(mem_interface.available());
         // assert_eq!(mem_interface.receive().is_some(), false);
         mem_interface.send(WindowId::new(1, 1, 1), vec![0], false);

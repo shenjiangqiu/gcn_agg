@@ -1,7 +1,7 @@
 use log::{debug, info};
 
 use super::window_id::WindowId;
-use crate::{graph::Graph, node_features::NodeFeatures};
+use crate::{graph::Graph, node_features::NodeFeatures, settings::RunningMode};
 use core::panic;
 use std::{cmp, collections::btree_set::Range, rc::Rc};
 pub struct WindowIterSettings {
@@ -10,7 +10,7 @@ pub struct WindowIterSettings {
     pub layer: usize,
     pub gcn_hidden_size: Vec<usize>,
     pub final_layer: bool,
-    pub is_sparse: bool,
+    pub running_mode: RunningMode,
 }
 #[derive(Debug, Clone)]
 pub struct InputWindow<'a> {
@@ -131,7 +131,7 @@ pub struct OutputWindowIterator<'a> {
     task_id: WindowId,
     gcn_hidden_size: Vec<usize>,
     pub final_layer: bool,
-    is_sparse: bool,
+    running_mode: RunningMode,
 }
 
 impl<'a> OutputWindowIterator<'a> {
@@ -146,7 +146,7 @@ impl<'a> OutputWindowIterator<'a> {
             layer,
             gcn_hidden_size,
             final_layer,
-            is_sparse,
+            running_mode,
         } = window_iter_settings;
         OutputWindowIterator {
             graph,
@@ -161,7 +161,7 @@ impl<'a> OutputWindowIterator<'a> {
             },
             gcn_hidden_size,
             final_layer,
-            is_sparse,
+            running_mode,
         }
     }
 }
@@ -216,7 +216,7 @@ impl<'a> Iterator for OutputWindowIterator<'a> {
             gcn_hidden_size: self.gcn_hidden_size.clone(),
             final_iter,
             final_layer: self.final_layer,
-            is_spare: self.is_sparse,
+            running_mode: self.running_mode.clone(),
         };
         let intput_iter = InputWindowIterator::new(
             self.task_id.clone(),
@@ -244,7 +244,7 @@ pub struct InputWindowIterator<'a> {
     gcn_hidden_size: Vec<usize>,
     final_iter: bool,
     final_layer: bool,
-    is_spare: bool,
+    running_mode: RunningMode,
 }
 // impl new for InputWindowIterator
 pub struct InputIterSettings {
@@ -254,7 +254,7 @@ pub struct InputIterSettings {
     pub gcn_hidden_size: Vec<usize>,
     pub final_iter: bool,
     pub final_layer: bool,
-    pub is_spare: bool,
+    pub running_mode: RunningMode,
 }
 impl<'a> InputWindowIterator<'a> {
     pub fn new(
@@ -270,7 +270,7 @@ impl<'a> InputWindowIterator<'a> {
             gcn_hidden_size,
             final_iter,
             final_layer,
-            is_spare,
+            running_mode,
         } = input_iter_settings;
         InputWindowIterator {
             task_id,
@@ -284,7 +284,7 @@ impl<'a> InputWindowIterator<'a> {
             gcn_hidden_size,
             final_iter,
             final_layer,
-            is_spare,
+            running_mode,
         }
     }
 }
@@ -331,42 +331,49 @@ impl<'a> Iterator for InputWindowIterator<'a> {
             let mut x_size = 0;
             // num of nodes in the window
             let mut x_len = 0;
-            if self.is_spare {
-                info!("build sparse window");
-                while x_size < self.input_buffer_size / 2
-                    && self.current_window_start_input_index + x_len < self.graph.get_num_node()
-                {
-                    let new_size = self
-                        .node_features
-                        .get_features(self.current_window_start_input_index + x_len)
-                        .len()
-                        * 4;
-                    debug!(
-                        "old size: {},new size: {}, max size: {}",
-                        x_size,
-                        new_size,
-                        self.input_buffer_size / 2
-                    );
-                    // fix bug here, it's ok to equal!
-                    if x_size + new_size > self.input_buffer_size / 2 {
+            match self.running_mode {
+                RunningMode::Sparse => {
+                    info!("build sparse window");
+                    while x_size < self.input_buffer_size / 2
+                        && self.current_window_start_input_index + x_len < self.graph.get_num_node()
+                    {
+                        let new_size = self
+                            .node_features
+                            .get_features(self.current_window_start_input_index + x_len)
+                            .len()
+                            * 4;
                         debug!(
-                            "break!xsize: {}, new size: {}, max size: {}",
+                            "old size: {},new size: {}, max size: {}",
                             x_size,
                             new_size,
                             self.input_buffer_size / 2
                         );
-                        break;
+                        // fix bug here, it's ok to equal!
+                        if x_size + new_size > self.input_buffer_size / 2 {
+                            debug!(
+                                "break!xsize: {}, new size: {}, max size: {}",
+                                x_size,
+                                new_size,
+                                self.input_buffer_size / 2
+                            );
+                            break;
+                        }
+                        x_size += new_size;
+                        x_len += 1;
                     }
-                    x_size += new_size;
-                    x_len += 1;
+                    info!("x_size:{},x_len:{}", x_size, x_len);
                 }
-                info!("x_size:{},x_len:{}", x_size, x_len);
-            } else {
-                // dense
-                info!("build dense window");
-                x_len += (self.input_buffer_size / 2) / (input_node_dim * 4);
-                info!("x_len:{}", x_len);
-            }
+
+                RunningMode::Dense => {
+                    // dense
+                    info!("build dense window");
+                    x_len += (self.input_buffer_size / 2) / (input_node_dim * 4);
+                    info!("x_len:{}", x_len);
+                }
+                RunningMode::Mixed => {
+                    todo!()
+                }
+            };
 
             debug!("the x_len is {}", x_len);
             if x_len == 0 {
@@ -486,7 +493,7 @@ mod test {
             input_buffer_size: 32,
             layer: 0,
             final_layer: false,
-            is_sparse: true,
+            running_mode: RunningMode::Sparse,
             gcn_hidden_size,
         };
         let output_window_iter =
@@ -527,7 +534,7 @@ mod test {
             input_buffer_size: 32,
             layer: 0,
             final_layer: false,
-            is_sparse: true,
+            running_mode: RunningMode::Sparse,
             gcn_hidden_size: gcn_hidden_size.clone(),
         };
         let output_window_iter =
@@ -545,7 +552,7 @@ mod test {
             input_buffer_size: 32,
             layer: 1,
             final_layer: true,
-            is_sparse: true,
+            running_mode: RunningMode::Sparse,
             gcn_hidden_size,
         };
         let output_window_iter =

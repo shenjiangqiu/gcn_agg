@@ -5,7 +5,8 @@ graph_path = "graphs/test.graph"
 agg_buffer_size = 256
 gcn_hidden_size = [16, 16]
 input_buffer_size = 256
-is_sparse = true
+running_mode = "Sparse"
+mem_config_name = "HBM-config.cfg"
 # output_buffer_size = 256
 [accelerator_settings.aggregator_settings]
 dense_cores = 2

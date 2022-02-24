@@ -1,2 +1,2 @@
 [accelerator_settings]
-is_sparse = false
+running_mode = "Dense"

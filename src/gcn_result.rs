@@ -16,10 +16,7 @@ pub struct GcnAggResult {
 
 impl GcnAggResult {
     pub fn new() -> Self {
-        GcnAggResult {
-            settings: None,
-            stats: None,
-        }
+        Self::default()
     }
 }
 /// # Description
@@ -27,7 +24,7 @@ impl GcnAggResult {
 /// # Fields
 /// - simulation_time: the simulation time
 /// - cycle: the number of cycles
-#[derive(Debug, Serialize,Default)]
+#[derive(Debug, Serialize, Default)]
 pub struct GcnStatistics {
     pub cycle: u64,
     pub simulation_time: String,

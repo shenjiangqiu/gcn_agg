@@ -1,5 +1,7 @@
 use std::{mem::swap, rc::Rc};
 
+use crate::settings::RunningMode;
+
 use super::{component::Component, sliding_window::OutputWindow, temp_agg_result::TempAggResult};
 #[derive(Debug, PartialEq)]
 pub enum BufferStatus {
@@ -42,13 +44,14 @@ pub struct AggBuffer {
 }
 
 impl AggBuffer {
-    pub(super) fn new(num_nodes: usize, is_parse: bool) -> Self {
-        let (current_temp_result, next_temp_result) = match is_parse {
-            true => (
+    pub(super) fn new(num_nodes: usize, running_mode: RunningMode) -> Self {
+        let (current_temp_result, next_temp_result) = match running_mode {
+            RunningMode::Sparse => (
                 Some(TempAggResult::new(num_nodes)),
                 Some(TempAggResult::new(num_nodes)),
             ),
-            false => (None, None),
+            RunningMode::Dense => (None, None),
+            RunningMode::Mixed => (todo!()),
         };
 
         AggBuffer {
@@ -85,7 +88,9 @@ impl Component for AggBuffer {
     /// ```
     ///
     fn cycle(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if let (BufferStatus::WaitingToMlp, BufferStatus::Empty) = (&self.current_state, &self.next_state) {
+        if let (BufferStatus::WaitingToMlp, BufferStatus::Empty) =
+            (&self.current_state, &self.next_state)
+        {
             swap(&mut self.current_state, &mut self.next_state);
             swap(&mut self.current_window, &mut self.next_window);
             // swap temp result
@@ -129,15 +134,13 @@ impl AggBuffer {
 
     #[allow(dead_code)]
     pub(super) fn get_current_window(&self) -> &Rc<OutputWindow> {
-        self
-            .current_window
+        self.current_window
             .as_ref()
             .unwrap_or_else(|| panic!("window should not be None!!"))
     }
 
     pub(super) fn get_next_window(&self) -> &Rc<OutputWindow> {
-        self
-            .next_window
+        self.next_window
             .as_ref()
             .unwrap_or_else(|| panic!("window should not be None!!"))
     }
@@ -157,5 +160,28 @@ impl AggBuffer {
     }
     pub(super) fn get_next_temp_result(&self) -> &Option<TempAggResult> {
         &self.next_temp_result
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::accelerator::window_id::WindowId;
+
+    use super::*;
+    #[test]
+    fn agg_buffer_test_sparse() {
+        let mut agg_buffer = AggBuffer::new(10, RunningMode::Sparse);
+        assert_eq!(agg_buffer.current_state, BufferStatus::Empty);
+        let output_window = Rc::new(OutputWindow::new(
+            1,
+            4,
+            WindowId::new(0, 0, 0),
+            10,
+            10,
+            false,
+            false,
+        ));
+        agg_buffer.add_task(output_window);
+
     }
 }

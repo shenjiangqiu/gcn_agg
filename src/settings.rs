@@ -17,6 +17,12 @@ pub struct Settings {
     pub features_paths: Vec<String>,
     pub accelerator_settings: AcceleratorSettings,
 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RunningMode {
+    Sparse,
+    Dense,
+    Mixed,
+}
 
 /// # Description
 /// - struct for recording the settings of gcn accelerator.
@@ -29,7 +35,8 @@ pub struct AcceleratorSettings {
     pub aggregator_settings: AggregatorSettings,
     pub mlp_settings: MlpSettings,
     pub sparsifier_settings: SparsifierSettings,
-    pub is_sparse: bool,
+    pub running_mode: RunningMode,
+    pub mem_config_name: String,
 }
 
 /// # Description

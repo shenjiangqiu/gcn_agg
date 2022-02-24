@@ -11,7 +11,6 @@ use super::{
     sparsify_buffer::{self, SparsifyBuffer},
 };
 
-use chrono::Local;
 use log::{debug, warn};
 /// # Description
 /// the state for the system
@@ -31,7 +30,9 @@ enum SystemState {
 use crate::{
     accelerator::sliding_window::WindowIterSettings,
     gcn_result::GcnStatistics,
-    settings::{AcceleratorSettings, AggregatorSettings, MlpSettings, SparsifierSettings},
+    settings::{
+        AcceleratorSettings, AggregatorSettings, MlpSettings, RunningMode, SparsifierSettings,
+    },
 };
 use crate::{graph::Graph, node_features::NodeFeatures};
 
@@ -47,7 +48,7 @@ pub struct System<'a> {
     agg_buffer: AggBuffer,
     mem_interface: MemInterface,
     sparsifier: Sparsifier,
-    is_sparse: bool,
+    running_mode: RunningMode,
     mlp: Mlp,
 
     graph: &'a Graph,
@@ -282,6 +283,7 @@ impl<'a> System<'a> {
         graph: &'a Graph,
         node_features: &'a [NodeFeatures],
         acc_settings: AcceleratorSettings,
+        stats_name: &str,
     ) -> System<'a> {
         let AcceleratorSettings {
             input_buffer_size,
@@ -291,7 +293,8 @@ impl<'a> System<'a> {
             mlp_settings,
             sparsifier_settings,
             // output_buffer_size,
-            is_sparse,
+            running_mode,
+            mem_config_name,
         } = acc_settings;
 
         let AggregatorSettings {
@@ -313,11 +316,9 @@ impl<'a> System<'a> {
         let input_buffer = InputBuffer::new();
         let output_buffer = OutputBuffer::new();
         let sparsify_buffer = SparsifyBuffer::new();
-        let agg_buffer = AggBuffer::new(graph.get_num_node(), is_sparse);
-        let mem_config_name = Local::now()
-            .format("output/%Y-%m-%d-%H-%M-%S%.6f_mem_stats.txt")
-            .to_string();
-        let mem_interface = MemInterface::new(64, 64, &mem_config_name);
+        let agg_buffer = AggBuffer::new(graph.get_num_node(), running_mode.clone());
+
+        let mem_interface = MemInterface::new(64, 64, &mem_config_name, stats_name);
         let mlp = Mlp::new(systolic_rows, systolic_cols, mlp_sparse_cores);
         let gcn_layer_num = node_features.len();
         let window_iter_settings = WindowIterSettings {
@@ -325,7 +326,7 @@ impl<'a> System<'a> {
             input_buffer_size,
             gcn_hidden_size: gcn_hidden_size.clone(),
             final_layer: gcn_layer_num == 1,
-            is_sparse,
+            running_mode: running_mode.clone(),
             layer: 0,
         };
         let mut current_output_iter = OutputWindowIterator::new(
@@ -353,7 +354,7 @@ impl<'a> System<'a> {
             output_buffer,
             sparsify_buffer,
             agg_buffer,
-            is_sparse,
+            running_mode,
             mem_interface,
             graph,
             node_features,
@@ -408,7 +409,7 @@ impl<'a> System<'a> {
                     input_buffer_size: self.input_buffer_size,
                     gcn_hidden_size: self.gcn_hidden_size.clone(),
                     final_layer: self.current_layer == self.gcn_layer_num - 1,
-                    is_sparse: self.is_sparse,
+                    running_mode: self.running_mode.clone(),
                     layer: self.current_layer,
                 };
 
@@ -467,43 +468,49 @@ impl<'a> System<'a> {
                     .get_current_window()
                     .expect("no window in input buffer");
                 let window_layer = window.get_task_id().layer_id;
-                if self.is_sparse {
-                    let start_addrs = &self
-                        .node_features
-                        .get(window_layer)
-                        .expect("no such layer in nodefeatures")
-                        .start_addrs;
-                    let mut start_addr = start_addrs[window.start_input_index];
-                    let end_addr = start_addrs[window.end_input_index];
-                    // round start_addr to the nearest 64
-                    start_addr = start_addr / 64 * 64;
-                    while start_addr < end_addr {
-                        addr_vec.push(start_addr);
-                        start_addr += 64;
+                match self.running_mode {
+                    RunningMode::Sparse => {
+                        let start_addrs = &self
+                            .node_features
+                            .get(window_layer)
+                            .expect("no such layer in nodefeatures")
+                            .start_addrs;
+                        let mut start_addr = start_addrs[window.start_input_index];
+                        let end_addr = start_addrs[window.end_input_index];
+                        // round start_addr to the nearest 64
+                        start_addr = start_addr / 64 * 64;
+                        while start_addr < end_addr {
+                            addr_vec.push(start_addr);
+                            start_addr += 64;
+                        }
+                        self.mem_interface
+                            .send(window.get_task_id().clone(), addr_vec, false);
+                        self.input_buffer.send_req(true);
+                        return Ok(true);
                     }
-                    self.mem_interface
-                        .send(window.get_task_id().clone(), addr_vec, false);
-                    self.input_buffer.send_req(true);
-                    return Ok(true);
-                } else {
-                    // dense
-                    let base_addr: u64 = (window_layer * 0x10000000) as u64;
-                    let mut start_addr = base_addr
-                        + window.start_input_index as u64
-                            * window.get_output_window().get_input_dim() as u64
-                            * 4;
-                    let end_addr = base_addr
-                        + window.end_input_index as u64
-                            * window.get_output_window().get_input_dim() as u64
-                            * 4;
-                    while start_addr < end_addr {
-                        addr_vec.push(start_addr);
-                        start_addr += 64;
+                    RunningMode::Dense => {
+                        // dense
+                        let base_addr: u64 = (window_layer * 0x10000000) as u64;
+                        let mut start_addr = base_addr
+                            + window.start_input_index as u64
+                                * window.get_output_window().get_input_dim() as u64
+                                * 4;
+                        let end_addr = base_addr
+                            + window.end_input_index as u64
+                                * window.get_output_window().get_input_dim() as u64
+                                * 4;
+                        while start_addr < end_addr {
+                            addr_vec.push(start_addr);
+                            start_addr += 64;
+                        }
+                        self.mem_interface
+                            .send(window.get_task_id().clone(), addr_vec, false);
+                        self.input_buffer.send_req(true);
+                        return Ok(true);
                     }
-                    self.mem_interface
-                        .send(window.get_task_id().clone(), addr_vec, false);
-                    self.input_buffer.send_req(true);
-                    return Ok(true);
+                    RunningMode::Mixed => {
+                        todo!()
+                    }
                 }
             }
         }
@@ -795,6 +802,8 @@ impl<'a> System<'a> {
 #[cfg(test)]
 mod test {
 
+    use chrono::Local;
+
     use super::*;
     use std::{fs::File, io::Write};
     #[test]
@@ -829,8 +838,9 @@ mod test {
         let acc_settings = AcceleratorSettings {
             agg_buffer_size: 64,
             input_buffer_size: 64,
-            is_sparse: true,
+            running_mode: RunningMode::Sparse,
             gcn_hidden_size,
+            mem_config_name: "HBM-config.cfg".into(),
             aggregator_settings: AggregatorSettings {
                 dense_cores: 1,
                 dense_width: 1,
@@ -846,7 +856,10 @@ mod test {
                 sparsifier_cores: 2,
             },
         };
-        let mut system = System::new(&graph, &node_features, acc_settings);
+        let stats_name = Local::now()
+            .format("output/%Y-%m-%d_%H-%M-%S%.6f-test.txt")
+            .to_string();
+        let mut system = System::new(&graph, &node_features, acc_settings, &stats_name);
         system.run()?;
         assert!(system.finished());
         Ok(())
