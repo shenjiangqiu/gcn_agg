@@ -1,7 +1,11 @@
 use chrono::Local;
 use clap::{Command, CommandFactory, Parser};
 use clap_complete::{generate, Generator};
-use gcn_agg::{cmd_args::Args, settings::Settings, GcnAggResult, Graph, NodeFeatures, System};
+use gcn_agg::{
+    cmd_args::Args,
+    settings::{RunningMode, Settings},
+    GcnAggResult, Graph, NodeFeatures, System,
+};
 use itertools::Itertools;
 use std::io;
 fn print_completions<G: Generator>(gen: G, cmd: &mut Command) {
@@ -40,14 +44,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let graph = Graph::new(graph_name.as_str())?;
 
-    let node_features: Vec<_> = features_name
-        .iter()
-        .map(|x| NodeFeatures::new(x.as_str()))
-        .try_collect()?;
+    let running_mode = &settings.accelerator_settings.running_mode;
+
+    let node_features_vec: Vec<_> = match running_mode {
+        RunningMode::Sparse | RunningMode::Mixed => features_name
+            .iter()
+            .map(|x| NodeFeatures::new(x.as_str()))
+            .try_collect()?,
+        RunningMode::Dense => {
+            //dense mode, no features
+            vec![]
+        }
+    };
+
     let stats_name = format!("output/{}_mem_stat.txt", current_time);
     let mut system = System::new(
         &graph,
-        &node_features,
+        &node_features_vec,
         settings.accelerator_settings,
         &stats_name,
     );

@@ -51,7 +51,7 @@ impl AggBuffer {
                 Some(TempAggResult::new(num_nodes)),
             ),
             RunningMode::Dense => (None, None),
-            RunningMode::Mixed => (todo!()),
+            RunningMode::Mixed => (None, None),
         };
 
         AggBuffer {
@@ -182,6 +182,5 @@ mod test {
             false,
         ));
         agg_buffer.add_task(output_window);
-
     }
 }

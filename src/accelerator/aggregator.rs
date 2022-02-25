@@ -3,7 +3,9 @@ use std::{
     vec,
 };
 
-use crate::node_features::NodeFeatures;
+use log::error;
+
+use crate::{node_features::NodeFeatures, settings::RunningMode};
 
 use super::{
     component::Component, sliding_window::InputWindow, temp_agg_result::TempAggResult,
@@ -73,11 +75,12 @@ impl Aggregator {
     pub fn add_task(
         &mut self,
         task: &InputWindow,
-        node_features: &NodeFeatures,
+        node_features: Option<&NodeFeatures>,
         temp_agg_result: &mut Option<TempAggResult>,
+        running_mode: &RunningMode,
     ) {
-        match temp_agg_result {
-            Some(temp_agg_result) => {
+        match *running_mode {
+            RunningMode::Sparse => {
                 let tasks = task.get_tasks().clone();
                 // collect tasks to Vec<Vec<usize>>
                 let output_start = task.start_output_index;
@@ -85,21 +88,40 @@ impl Aggregator {
 
                 let cycles = self.get_add_sparse_cycle(
                     tasks,
-                    &mut temp_agg_result[output_start..output_end],
-                    node_features,
+                    &mut temp_agg_result.as_mut().unwrap()[output_start..output_end],
+                    node_features.unwrap(),
                 );
 
                 self.state = AggregatorState::Working;
                 self.current_task_id = Some(task.get_task_id().clone());
                 self.current_task_remaining_cycles = cycles;
             }
-            None => {
+            RunningMode::Dense => {
                 // dense aggregation
                 let num_add = task
                     .get_tasks()
                     .iter()
                     .fold(0, |acc, x| acc + x.clone().count());
                 let mut cycles: u64 = 0;
+                cycles += (num_add * task.get_output_window().get_input_dim()
+                    / (self.dense_width * self.dense_cores)) as u64;
+                // extra cycle for load data
+                cycles *= 2;
+                self.state = AggregatorState::Working;
+                self.current_task_id = Some(task.get_task_id().clone());
+                self.current_task_remaining_cycles = cycles;
+            }
+            RunningMode::Mixed => {
+                let mut cycles: u64 = 0;
+
+                // first need to unpack the sparse data to dense
+                error!("need to decide the unpack algorithm");
+                todo!("need to decide the number of the cycles needed for unpack!");
+                // then perform dense aggregation
+                let num_add = task
+                    .get_tasks()
+                    .iter()
+                    .fold(0, |acc, x| acc + x.clone().count());
                 cycles += (num_add * task.get_output_window().get_input_dim()
                     / (self.dense_width * self.dense_cores)) as u64;
                 // extra cycle for load data

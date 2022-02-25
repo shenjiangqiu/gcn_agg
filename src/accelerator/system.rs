@@ -52,7 +52,8 @@ pub struct System<'a> {
     mlp: Mlp,
 
     graph: &'a Graph,
-    node_features: &'a [NodeFeatures],
+    // if it's dense mode, the size of node features should be zero!
+    node_features_vec: &'a [NodeFeatures],
 
     input_buffer_size: usize,
     agg_buffer_size: usize,
@@ -61,7 +62,7 @@ pub struct System<'a> {
     current_output_iter: OutputWindowIterator<'a>,
     current_input_iter: InputWindowIterator<'a>,
     current_window: Option<InputWindow<'a>>,
-    gcn_layer_num: usize,
+    gcn_layers: usize,
     gcn_hidden_size: Vec<usize>,
 
     possible_deadloack_count: usize,
@@ -131,6 +132,7 @@ impl Component for System<'_> {
                 if self.possible_deadloack_count == 200000 {
                     warn!("possible deadlock, current cycle:{}", self.total_cycle);
                     self.possible_deadloack_count = 0;
+                    warn!("self.state:{:?}", self.state);
                     warn!("input_buffer:{:?}", self.input_buffer);
                     warn!("output_buffer:{:?}", self.output_buffer);
                     warn!("agg_buffer:{:?}", self.agg_buffer);
@@ -193,6 +195,7 @@ impl Component for System<'_> {
                 if self.possible_deadloack_count == 200000 {
                     warn!("possible deadlock, current cycle:{}", self.total_cycle);
                     self.possible_deadloack_count = 0;
+                    warn!("self.state:{:?}", self.state);
                     warn!("input_buffer:{:?}", self.input_buffer);
                     warn!("output_buffer:{:?}", self.output_buffer);
                     warn!("agg_buffer:{:?}", self.agg_buffer);
@@ -209,6 +212,7 @@ impl Component for System<'_> {
             }
             &SystemState::ChangedLayer => {
                 // cannot add new task until the current layer is finished(triggle by handle_start_writeback)
+                // if dead lock here, check handle_start_writeback! need to change the stat there!
                 self.aggregator.cycle()?;
                 self.mem_interface.cycle()?;
                 self.agg_buffer.cycle()?;
@@ -255,6 +259,7 @@ impl Component for System<'_> {
                 if self.possible_deadloack_count == 200000 {
                     warn!("possible deadlock, current cycle:{}", self.total_cycle);
                     self.possible_deadloack_count = 0;
+                    warn!("self.state:{:?}", self.state);
                     warn!("input_buffer:{:?}", self.input_buffer);
                     warn!("output_buffer:{:?}", self.output_buffer);
                     warn!("agg_buffer:{:?}", self.agg_buffer);
@@ -281,7 +286,7 @@ impl Component for System<'_> {
 impl<'a> System<'a> {
     pub fn new(
         graph: &'a Graph,
-        node_features: &'a [NodeFeatures],
+        node_features_vec: &'a [NodeFeatures],
         acc_settings: AcceleratorSettings,
         stats_name: &str,
     ) -> System<'a> {
@@ -295,6 +300,7 @@ impl<'a> System<'a> {
             // output_buffer_size,
             running_mode,
             mem_config_name,
+            gcn_layers,
         } = acc_settings;
 
         let AggregatorSettings {
@@ -320,20 +326,24 @@ impl<'a> System<'a> {
 
         let mem_interface = MemInterface::new(64, 64, &mem_config_name, stats_name);
         let mlp = Mlp::new(systolic_rows, systolic_cols, mlp_sparse_cores);
-        let gcn_layer_num = node_features.len();
         let window_iter_settings = WindowIterSettings {
             agg_buffer_size,
             input_buffer_size,
             gcn_hidden_size: gcn_hidden_size.clone(),
-            final_layer: gcn_layer_num == 1,
+            is_final_layer: gcn_layers == 1,
             running_mode: running_mode.clone(),
             layer: 0,
         };
-        let mut current_output_iter = OutputWindowIterator::new(
-            graph,
-            node_features.get(0).expect("node_features is empty"),
-            window_iter_settings,
-        );
+        let node_feature = match running_mode {
+            RunningMode::Mixed | RunningMode::Sparse => {
+                Some(node_features_vec.get(0).expect("node_features is empty"))
+            }
+            RunningMode::Dense => None,
+        };
+
+        let mut current_output_iter =
+            OutputWindowIterator::new(graph, node_feature, window_iter_settings);
+
         let mut current_input_iter = current_output_iter
             .next()
             .expect("cannot build the first input iter");
@@ -357,7 +367,7 @@ impl<'a> System<'a> {
             running_mode,
             mem_interface,
             graph,
-            node_features,
+            node_features_vec,
             input_buffer_size,
             agg_buffer_size,
             // output_buffer_size,
@@ -365,7 +375,7 @@ impl<'a> System<'a> {
             current_output_iter,
             current_input_iter,
             current_window,
-            gcn_layer_num,
+            gcn_layers,
             gcn_hidden_size,
             mlp,
             sparsifier: Sparsifier::new(sparsifier_cores),
@@ -398,7 +408,7 @@ impl<'a> System<'a> {
                 debug!("get next output iter");
                 // need to move to the next layer and reset the output iter
                 self.current_layer += 1;
-                if self.current_layer >= self.gcn_layer_num {
+                if self.current_layer >= self.gcn_layers {
                     debug!("No more window!");
                     // self.finished = true;
                     self.state = SystemState::NoMoreWindow;
@@ -408,20 +418,21 @@ impl<'a> System<'a> {
                     agg_buffer_size: self.agg_buffer_size,
                     input_buffer_size: self.input_buffer_size,
                     gcn_hidden_size: self.gcn_hidden_size.clone(),
-                    final_layer: self.current_layer == self.gcn_layer_num - 1,
+                    is_final_layer: self.current_layer == self.gcn_layers - 1,
                     running_mode: self.running_mode.clone(),
                     layer: self.current_layer,
                 };
+                let node_feature = match self.running_mode {
+                    RunningMode::Mixed | RunningMode::Sparse => Some(
+                        self.node_features_vec
+                            .get(self.current_layer)
+                            .expect("node_features is empty"),
+                    ),
+                    RunningMode::Dense => None,
+                };
 
-                self.current_output_iter = OutputWindowIterator::new(
-                    self.graph,
-                    self.node_features
-                        .get(self.current_layer)
-                        .unwrap_or_else(|| {
-                            panic!("node_features is empty, layer: {}", self.current_layer)
-                        }),
-                    window_iter_settings,
-                );
+                self.current_output_iter =
+                    OutputWindowIterator::new(self.graph, node_feature, window_iter_settings);
                 self.current_input_iter = self
                     .current_output_iter
                     .next()
@@ -469,9 +480,9 @@ impl<'a> System<'a> {
                     .expect("no window in input buffer");
                 let window_layer = window.get_task_id().layer_id;
                 match self.running_mode {
-                    RunningMode::Sparse => {
+                    RunningMode::Sparse | RunningMode::Mixed => {
                         let start_addrs = &self
-                            .node_features
+                            .node_features_vec
                             .get(window_layer)
                             .expect("no such layer in nodefeatures")
                             .start_addrs;
@@ -485,12 +496,12 @@ impl<'a> System<'a> {
                         }
                         self.mem_interface
                             .send(window.get_task_id().clone(), addr_vec, false);
-                        self.input_buffer.send_req(true);
+                        self.input_buffer.send_req_current();
                         return Ok(true);
                     }
                     RunningMode::Dense => {
                         // dense
-                        let base_addr: u64 = (window_layer * 0x10000000) as u64;
+                        let base_addr: u64 = window_layer as u64 * 0x100000000;
                         let mut start_addr = base_addr
                             + window.start_input_index as u64
                                 * window.get_output_window().get_input_dim() as u64
@@ -505,11 +516,8 @@ impl<'a> System<'a> {
                         }
                         self.mem_interface
                             .send(window.get_task_id().clone(), addr_vec, false);
-                        self.input_buffer.send_req(true);
+                        self.input_buffer.send_req_current();
                         return Ok(true);
-                    }
-                    RunningMode::Mixed => {
-                        todo!()
                     }
                 }
             }
@@ -525,23 +533,48 @@ impl<'a> System<'a> {
                     .get_next_window()
                     .expect("no window in input buffer");
                 let window_layer = window.get_task_id().layer_id;
-                let start_addrs = &self
-                    .node_features
-                    .get(window_layer)
-                    .expect("no such layer in nodefeatures")
-                    .start_addrs;
-                let mut start_addr = start_addrs[window.start_input_index];
-                let end_addr = start_addrs[window.end_input_index];
-                // round start_addr to the nearest 64
-                start_addr = start_addr / 64 * 64;
-                while start_addr < end_addr {
-                    addr_vec.push(start_addr);
-                    start_addr += 64;
+                match self.running_mode {
+                    RunningMode::Sparse | RunningMode::Mixed => {
+                        let start_addrs = &self
+                            .node_features_vec
+                            .get(window_layer)
+                            .expect("no such layer in nodefeatures")
+                            .start_addrs;
+                        let mut start_addr = start_addrs[window.start_input_index];
+                        let end_addr = start_addrs[window.end_input_index];
+                        // round start_addr to the nearest 64
+                        start_addr = start_addr / 64 * 64;
+                        while start_addr < end_addr {
+                            addr_vec.push(start_addr);
+                            start_addr += 64;
+                        }
+                        self.mem_interface
+                            .send(window.get_task_id().clone(), addr_vec, false);
+                        self.input_buffer.send_req_next();
+                        return Ok(true);
+                    }
+                    RunningMode::Dense => {
+                        // dense
+                        let base_addr: u64 = window_layer as u64 * 0x100000000;
+                        let mut start_addr = base_addr
+                            + window.start_input_index as u64
+                                * window.get_output_window().get_input_dim() as u64
+                                * 4;
+                        let end_addr = base_addr
+                            + window.end_input_index as u64
+                                * window.get_output_window().get_input_dim() as u64
+                                * 4;
+                        start_addr = start_addr / 64 * 64;
+                        while start_addr < end_addr {
+                            addr_vec.push(start_addr);
+                            start_addr += 64;
+                        }
+                        self.mem_interface
+                            .send(window.get_task_id().clone(), addr_vec, false);
+                        self.input_buffer.send_req_next();
+                        return Ok(true);
+                    }
                 }
-                self.mem_interface
-                    .send(window.get_task_id().clone(), addr_vec, false);
-                self.input_buffer.send_req(false);
-                return Ok(true);
             }
         }
 
@@ -607,8 +640,9 @@ impl<'a> System<'a> {
                 .add_task(current_window.get_output_window().clone());
             self.aggregator.add_task(
                 current_window,
-                self.node_features.get(window_layer).unwrap(),
+                self.node_features_vec.get(window_layer),
                 self.agg_buffer.get_current_temp_result_mut(),
+                &self.running_mode,
             );
             self.input_buffer.start_aggragating();
             return Ok(true);
@@ -695,24 +729,38 @@ impl<'a> System<'a> {
             debug!("start the sparsifier: {:?}", &current_window);
 
             let window_layer = current_window.get_task_id().layer_id;
-            if window_layer == self.gcn_layer_num - 1 {
-                // no need to sparsify
-                debug!("no need to sparsify, layer:{}", window_layer);
-                self.sparsifier.add_task_last_layer();
-                self.output_buffer.start_sparsify(current_window.clone());
-                self.sparsify_buffer.start_sparsify();
-            } else {
-                let input_dim = current_window.get_input_dim();
-                let output_dim = current_window.get_output_dim();
-                let output_layer_id = current_window.get_task_id().layer_id + 1;
-                let output_feature = self.node_features.get(output_layer_id).unwrap();
 
-                self.sparsifier
-                    .add_task(input_dim, output_dim, output_feature);
-                self.output_buffer.start_sparsify(current_window.clone());
+            match self.running_mode {
+                RunningMode::Sparse | RunningMode::Mixed => {
+                    // only sparse or mixed mode need sparsifier
 
-                self.sparsify_buffer.start_sparsify();
-            }
+                    if window_layer == self.gcn_layers - 1 {
+                        // no need to sparsify
+                        debug!("no need to sparsify, layer:{}", window_layer);
+                        self.sparsifier.add_task_last_layer();
+                        self.output_buffer.start_sparsify(current_window.clone());
+                        self.sparsify_buffer.start_sparsify();
+                    } else {
+                        let input_dim = current_window.get_input_dim();
+                        let output_dim = current_window.get_output_dim();
+                        let output_layer_id = current_window.get_task_id().layer_id + 1;
+                        let output_feature = self.node_features_vec.get(output_layer_id).unwrap();
+
+                        self.sparsifier
+                            .add_task(input_dim, output_dim, output_feature);
+                        self.output_buffer.start_sparsify(current_window.clone());
+
+                        self.sparsify_buffer.start_sparsify();
+                    }
+                }
+                RunningMode::Dense => {
+                    // we do not need sparsify, just finish it!
+                    self.sparsifier.skip_sparsify();
+                    self.output_buffer.skip_sparsify(current_window.clone());
+                    self.sparsify_buffer.skip_sparsify();
+                }
+            };
+
             return Ok(true);
         }
         Ok(false)
@@ -751,10 +799,10 @@ impl<'a> System<'a> {
             // the write back traffic is compressed
             debug!("start writeback");
             let current_window = self.output_buffer.next_window.as_ref().unwrap().clone();
-            if current_window.final_layer {
+            if current_window.is_final_layer {
                 // do nothing,
                 // the final layer is not written back
-                if current_window.final_window {
+                if current_window.is_final_window {
                     // do nothing, this is the class output, just return and set simulator to finished
                     debug!(
                         "finish the simulation, the last window is : {:?}",
@@ -769,30 +817,63 @@ impl<'a> System<'a> {
 
             // else, the write back traffic is decided be next layer's input.
             let layer_id = current_window.get_task_id().layer_id;
-            let node_feature = self.node_features.get(layer_id + 1).unwrap();
-            let mut addr_vec = vec![];
 
-            let start_addrs = &node_feature.start_addrs;
-            let mut start_addr = start_addrs[current_window.start_output_index];
-            let end_addr = start_addrs[current_window.end_output_index];
-            // round start_addr to the nearest 64
-            start_addr = start_addr / 64 * 64;
-            while start_addr < end_addr {
-                addr_vec.push(start_addr);
-                start_addr += 64;
-            }
-            self.mem_interface
-                .send(current_window.get_task_id().clone(), addr_vec, true);
+            match self.running_mode {
+                RunningMode::Sparse | RunningMode::Mixed => {
+                    // write back sparse window
+                    let node_feature = self.node_features_vec.get(layer_id + 1).unwrap();
+                    let mut addr_vec = vec![];
 
-            if current_window.final_window {
-                // do nothing, this is the class output, just return and set simulator to finished
-                debug!("finish current layer: {:?}", current_window);
-                assert_eq!(self.state, SystemState::ChangedLayer);
-                self.state = SystemState::Working;
-            }
-            self.output_buffer.start_write_back();
+                    let start_addrs = &node_feature.start_addrs;
+                    let mut start_addr = start_addrs[current_window.start_output_index];
+                    let end_addr = start_addrs[current_window.end_output_index];
+                    // round start_addr to the nearest 64
+                    start_addr = start_addr / 64 * 64;
+                    while start_addr < end_addr {
+                        addr_vec.push(start_addr);
+                        start_addr += 64;
+                    }
+                    self.mem_interface
+                        .send(current_window.get_task_id().clone(), addr_vec, true);
 
-            return Ok(true);
+                    if current_window.is_final_window {
+                        // do nothing, this is the class output, just return and set simulator to finished
+                        debug!("finish current layer: {:?}", current_window);
+                        assert_eq!(self.state, SystemState::ChangedLayer);
+                        self.state = SystemState::Working;
+                    }
+                    self.output_buffer.start_write_back();
+
+                    return Ok(true);
+                }
+                RunningMode::Dense => {
+                    // write back dense window
+                    let mut addr_vec = vec![];
+                    let base_addr: u64 = current_window.get_task_id().layer_id as u64 * 0x100000000;
+                    let mut start_addr = base_addr
+                        + current_window.start_output_index as u64
+                            * current_window.get_output_dim() as u64
+                            * 4;
+                    let end_addr = base_addr
+                        + current_window.end_output_index as u64
+                            * current_window.get_output_dim() as u64
+                            * 4;
+                    while start_addr < end_addr {
+                        addr_vec.push(start_addr);
+                        start_addr += 64;
+                    }
+                    self.mem_interface
+                        .send(current_window.get_task_id().clone(), addr_vec, true);
+                    if current_window.is_final_window {
+                        // do nothing, this is the class output, just return and set simulator to finished
+                        debug!("finish current layer: {:?}", current_window);
+                        assert_eq!(self.state, SystemState::ChangedLayer);
+                        self.state = SystemState::Working;
+                    }
+                    self.output_buffer.start_write_back();
+                    return Ok(true);
+                }
+            };
         }
 
         Ok(false)
@@ -836,6 +917,7 @@ mod test {
         let gcn_hidden_size = vec![2];
         let node_features = vec![node_features1, node_features2];
         let acc_settings = AcceleratorSettings {
+            gcn_layers: 2,
             agg_buffer_size: 64,
             input_buffer_size: 64,
             running_mode: RunningMode::Sparse,

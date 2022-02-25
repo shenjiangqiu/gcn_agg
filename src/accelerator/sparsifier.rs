@@ -2,6 +2,8 @@
 //!
 //!
 
+use log::error;
+
 use crate::node_features::NodeFeatures;
 
 use super::component::Component;
@@ -41,6 +43,11 @@ impl Sparsifier {
         }
     }
 
+    pub fn skip_sparsify(&mut self) {
+        // just do nothing
+        assert!(matches!(self.state, SparsifierState::Idle));
+    }
+
     /// # Description
     /// - this is so ***tricky***! be careful!
     /// - we already know the input dimension and know the result sparse vector, so we do not need to know what is the input data!
@@ -56,6 +63,7 @@ impl Sparsifier {
         _output_feature: &NodeFeatures,
     ) {
         self.remaining_cycle = 10;
+        error!("need to decide the sparsifier algorithm");
         self.state = SparsifierState::Working;
     }
 

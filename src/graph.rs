@@ -28,29 +28,33 @@ impl Graph {
     /// the following lines are the edges
     /// the last line is end or END
     /// # Examples
-    /// ```ignore
-    /// use gcn_agg::graph::Graph;
-    /// use std::{fs::File, io::{Read,Write}};
-    /// let file_name="test_data/graph.txt";
-    /// // write the graph to the file
-    /// let data="f 3\n0 1 2\n1 2 0\n2 0 1\nend\n";
-    /// let mut f = File::create(file_name).expect("file not found");
-    /// f.write_all(data.as_bytes())
-    ///     .expect("something went wrong writing the file");
-    /// // read the graph from the file
-    /// let graph = Graph::from("test_data/graph.txt");
-    /// assert_eq!(graph.get_feature_size(), 3);
-    /// assert_eq!(graph.get_csc()[0][0], 0);
-    /// assert_eq!(graph.get_csc()[0][1], 1);
-    /// assert_eq!(graph.get_csc()[0][2], 2);
-    /// assert_eq!(graph.get_csc()[1][0], 1);
-    /// assert_eq!(graph.get_csc()[1][1], 2);
-    /// assert_eq!(graph.get_csc()[1][2], 0);
-    /// assert_eq!(graph.get_csc()[2][0], 2);
-    /// assert_eq!(graph.get_csc()[2][1], 0);
-    /// assert_eq!(graph.get_csc()[2][2], 1);
-    /// // delete the file
-    /// std::fs::remove_file(file_name).expect("failed to delete the file");
+    /// ```
+    ///     use gcn_agg::graph::Graph;
+    ///    use std::fs::File;
+    ///    use std::io::Write;
+    ///    let file_name = "test_data/graph_csr.txt";
+    ///    // write the graph to the file
+    ///    let data = "f 3\n0 1\n1 2\n2 0\nend\n";
+    ///    let mut f = File::create(file_name).expect("file not found");
+    ///    f.write_all(data.as_bytes())
+    ///        .expect("something went wrong writing the file");
+    ///    // read the graph from the file
+    ///
+    ///    let mut graph = Graph::new(file_name).unwrap();
+    ///    
+    ///
+    ///    if let Some(csr) = graph.get_csr() {
+    ///        assert!(csr[0].contains(&0));
+    ///        assert!(csr[0].contains(&2));
+    ///        assert!(csr[1].contains(&0));
+    ///        assert!(csr[1].contains(&1));
+    ///        assert!(csr[2].contains(&1));
+    ///        assert!(csr[2].contains(&2));
+    ///        assert_eq!(csr.len(), 3);
+    ///    } else {
+    ///        panic!("csr is not generated");
+    ///    }
+    ///    
     /// ```
     ///
     pub fn new(file_name: &str) -> Result<Self, Box<dyn Error>> {
@@ -188,8 +192,7 @@ mod graph_test {
             .expect("something went wrong writing the file");
         // read the graph from the file
 
-        let mut graph = Graph::new(file_name)?;
-        graph.generate_csr();
+        let graph = Graph::new(file_name)?;
 
         if let Some(csr) = graph.get_csr() {
             assert!(csr[0].contains(&0));

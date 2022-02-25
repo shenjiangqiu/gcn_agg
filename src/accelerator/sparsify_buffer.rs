@@ -1,9 +1,8 @@
 //! this is sparsifier buffer
 //! which is use to store the content from mlp and to sparsifier
-//! 
+//!
 //! also see output_buffer.rs
-//! 
-
+//!
 
 use std::{mem::swap, rc::Rc};
 
@@ -48,7 +47,9 @@ impl Component for SparsifyBuffer {
     /// ```
     ///
     fn cycle(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if let (BufferStatus::WaitingToSparsify, BufferStatus::Empty) = (&self.current_state, &self.next_state) {
+        if let (BufferStatus::WaitingToSparsify, BufferStatus::Empty) =
+            (&self.current_state, &self.next_state)
+        {
             swap(&mut self.current_state, &mut self.next_state);
             swap(&mut self.current_window, &mut self.next_window);
         }
@@ -64,6 +65,11 @@ impl SparsifyBuffer {
             current_window: None,
             next_window: None,
         }
+    }
+    pub fn skip_sparsify(&mut self) {
+        // just do nothing
+        assert!(matches!(self.next_state, BufferStatus::WaitingToSparsify));
+        self.next_state = BufferStatus::Empty;
     }
 
     pub fn start_mlp(&mut self, output_window: Rc<OutputWindow>) {

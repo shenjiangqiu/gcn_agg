@@ -133,16 +133,26 @@ impl<'a> InputBuffer<'a> {
     /// assert_eq!(input_buffer.send_req(), Some(1));
     /// assert_eq!(input_buffer.send_req(), None);
     /// ```
-    pub fn send_req(&mut self, is_current: bool) {
+    pub fn send_req_current(&mut self) {
         // test if id match any
-        match is_current {
-            true => {
-                self.current_state = BufferStatus::Loading;
-            }
-            false => {
-                self.next_state = BufferStatus::Loading;
-            }
-        }
+        self.current_state = BufferStatus::Loading;
+    }
+    /// # Description
+    /// * try to get a waiting id to send
+    /// * if there is no waiting id, return None
+    /// * if there is a waiting id, return Some(id)
+    /// # example
+    /// ```ignore
+    ///
+    /// use gcn_agg::accelerator::input_buffer::{InputBuffer, BufferStatus};
+    /// let mut input_buffer = InputBuffer::new();
+    /// input_buffer.current_state = BufferStatus::WaitingToLoad(1);
+    /// assert_eq!(input_buffer.send_req(), Some(1));
+    /// assert_eq!(input_buffer.send_req(), None);
+    /// ```
+    pub fn send_req_next(&mut self) {
+        // test if id match any
+        self.next_state = BufferStatus::Loading;
     }
 
     pub fn add_task_to_next(&mut self, window: InputWindow<'a>) {
@@ -263,4 +273,4 @@ impl<'a> InputBuffer<'a> {
     pub(super) fn start_aggragating(&mut self) {
         self.current_state = BufferStatus::Reading;
     }
- }
+}

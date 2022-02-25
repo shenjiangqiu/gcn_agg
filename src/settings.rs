@@ -37,6 +37,7 @@ pub struct AcceleratorSettings {
     pub sparsifier_settings: SparsifierSettings,
     pub running_mode: RunningMode,
     pub mem_config_name: String,
+    pub gcn_layers: usize,
 }
 
 /// # Description
@@ -84,12 +85,22 @@ impl Settings {
             .add_source(default_files)
             .build()?
             .try_deserialize()?;
-
-        match result.features_paths.len() - result.accelerator_settings.gcn_hidden_size.len() {
-            1 => Ok(result),
-            _ => Err(
-                "the number of features paths is not equal to the number of gcn hidden size".into(),
-            ),
+        if result.accelerator_settings.gcn_layers == 0 {
+            return Err("gcn_layers must be greater than 0".into());
+        }
+        if result.accelerator_settings.gcn_layers
+            != result.accelerator_settings.gcn_hidden_size.len() + 1
+        {
+            return Err("gcn_layers must be equal to gcn_hidden_size".into());
+        }
+        match result.accelerator_settings.running_mode {
+            RunningMode::Dense => Ok(result),
+            RunningMode::Mixed | RunningMode::Sparse => {
+                match result.features_paths.len() - result.accelerator_settings.gcn_hidden_size.len() {
+                    1 => Ok(result),
+                    _ => Err("the number of features paths is not equal to the number of gcn hidden size".into()),
+                }
+            }
         }
     }
 }

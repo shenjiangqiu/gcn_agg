@@ -44,7 +44,9 @@ impl Component for OutputBuffer {
     /// ```
     ///
     fn cycle(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if let (BufferStatus::WaitingToWriteBack, BufferStatus::Empty) = (&self.current_state, &self.next_state) {
+        if let (BufferStatus::WaitingToWriteBack, BufferStatus::Empty) =
+            (&self.current_state, &self.next_state)
+        {
             swap(&mut self.current_state, &mut self.next_state);
             swap(&mut self.current_window, &mut self.next_window);
         }
@@ -60,6 +62,11 @@ impl OutputBuffer {
             current_window: None,
             next_window: None,
         }
+    }
+    pub fn skip_sparsify(&mut self, window: Rc<OutputWindow>) {
+        assert!(matches!(self.current_state, BufferStatus::Empty));
+        self.current_state = BufferStatus::WaitingToWriteBack;
+        self.current_window = Some(window);
     }
 
     pub fn start_sparsify(&mut self, window: Rc<OutputWindow>) {
